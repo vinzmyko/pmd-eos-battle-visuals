@@ -23,18 +23,21 @@ Table Properties:
 
 ```c
 struct move_animation {
-    int16_t effect_id_0;         // 0x0:  Effect animation layer 0
-    int16_t effect_id_1;         // 0x2:  Effect animation layer 1 (secondary)
-    int16_t effect_id_2;         // 0x4:  Effect animation layer 2 (main/primary)
-    int16_t effect_id_3;         // 0x6:  Effect animation layer 3
-    uint8_t flags;               // 0x8:  Behavior flags (see Flags section)
-    uint8_t padding[3];          // 0x9:  UNUSED - Memory alignment padding
-    int32_t animation_speed;     // 0xC:  Projectile/animation speed (1, 2, or other)
-    uint8_t anim_type;           // 0x10: Monster animation type (maps to Animation IDs)
-    int8_t palette_param;        // 0x11: Position offset index (0-3)
-    uint16_t se_id;              // 0x12: Sound effect ID (0x3F00 = silence)
-    int16_t spc_anim_count;      // 0x14: Number of sprite-specific overrides
-    uint16_t spc_anim_index;     // 0x16: Index into special_monster_move_animation table
+    // Effect layers - NO layer is "primary", game iterates all and plays non-zero effects
+    int16_t effect_id_1;           // 0x00: Effect animation layer 1
+    int16_t effect_id_2;           // 0x02: Effect animation layer 2
+    int16_t effect_id_3;           // 0x04: Effect animation layer 3
+    int16_t effect_id_4;           // 0x06: Effect animation layer 4
+    
+    uint8_t flags;                 // 0x08: Behavior flags (see Flags section)
+    uint8_t _padding[3];           // 0x09-0x0B: Alignment padding (always 0)
+    
+    int32_t projectile_speed;      // 0x0C: 0=instant, 1=slow(12f), 2=medium(8f), other=fast(4f)
+    uint8_t monster_anim_type;     // 0x10: Sprite animation (0-12 standard, 98/99 special)
+    int8_t  attachment_point_idx;  // 0x11: Position offset index (-1 to 3) - SIGNED
+    uint16_t sound_effect_id;      // 0x12: Sound effect ID (0x3F00 = silence)
+    int16_t override_count;        // 0x14: Number of per-Pokemon overrides
+    uint16_t override_table_index; // 0x16: Index into special_monster_move_animation table
 };
 // Size: 0x18 (24 bytes)
 ```
@@ -48,6 +51,12 @@ struct move_animation {
 Type: Four `int16_t` values (effect IDs)
 
 Purpose: References to the `EFFECT_ANIMATION_INFO` table. Multiple effect layers can be active simultaneously.
+
+Seems like there is no "Primary" Layer**
+
+Earlier research suggested `effect_id_2` (offset 0x04) was the "primary" effect.
+
+The game iterates all four layers (`FUN_022bf160`) and plays any non-zero effect.
 
 Evidence:
 - `FUN_022bf160`: Iterates through all four fields, treating each as an effect_id and calling `GetEffectAnimation()` on each value to check if any layer uses animation type 5
@@ -258,11 +267,28 @@ else if (iVar9 == 0x62) {
 
 ---
 
-### Offset 0x11: Position Offset Parameter
+### Offset 0x11: Attachment Point Index
 
 Type: `int8_t` (signed)
 
-Purpose: Index (0-3) into a position offset lookup table. Controls where effects spawn relative to the monster sprite.
+Purpose: Index into position offset lookup table. Controls where effects spawn relative to the monster sprite.
+
+Range: -1 to 3
+
+The move animation info json dumped confirmed that it is signed and can be negative:
+```json
+"547": { "attachment_point_idx": -1, ... }
+```
+
+| Value | Meaning | Behavior |
+|-------|---------|----------|
+| -1 | Default/Center | No lookup, use sprite center |
+| 0 | None | Zero offset |
+| 1 | Head | Offset to head position |
+| 2 | Centre | Offset to body center |
+| 3 | LeftHand | Offset to left hand/appendage |
+
+Values outside -1 to 3 cause early return with zeros in `FUN_0201cf90`.
 
 Evidence:
 - `FUN_022bf01c`: Reads `pmVar1->field_0x11` and uses return value with `FUN_0201cf90`, can be overridden by special_monster_move_animation table
@@ -638,21 +664,26 @@ if (param_3 < 2) {
 
 ---
 
-## Data Validation Notes
+## Confirmed vs Uncertain Fields
 
-### Confirmed Behaviors
-- All four effect_id fields (0x00-0x06) are valid references to EFFECT_ANIMATION_INFO table
-- Offset 0x0C is a 4-byte integer (int32_t), not a single byte
-- Behavior flags use individual bits for different purposes, not a combined value
-- Override system allows per-species customization of sounds, positions, and animations
-- Padding bytes 0x09-0x0B are unused (all zeros in memory)
-- Special animation table has 6-byte entries
+### Fully Confirmed (verified via JSON extraction)
+- All four effect layers are valid and used non-linearly
+- `attachment_point_idx` is signed (`int8_t`), range -1 to 3
+- `sound_effect_id` value 0x3F00 (16128) = silence
+- `monster_anim_type` values 98 and 99 are special rotational behaviors
+- Padding bytes 0x09-0x0B are always zero
+- Override system uses 6-byte entries
 
-### Unconfirmed Elements
-- Exact purpose of flag bits 3 and 5 (masks 0x08 and 0x20)
-- Full mapping of animation_category values (bits 0-2, range 0-7)
-- Complete list of moves using multi-layer effects
-- Exact meaning of special moves 0x128 and 0x76
+### Partially Confirmed (behavior observed, purpose unclear)
+- `animation_category` (bits 0-2): Values 0-2 observed, purpose unknown
+- Flag bit 4 (`skip_fade_in`): Confirmed to control fade, exact conditions unclear
+- Flag bit 6 (`add_delay`): Confirmed to add delay, duration unknown
+
+### Unknown (no data or conflicting evidence)
+- Flag bit 3: Never observed set to true in sample data
+- Flag bit 5: Never observed set to true in sample data  
+- Flag bit 7: Never observed set to true in sample data
+- Full mapping of `animation_category` values 0-7
 
 ---
 
