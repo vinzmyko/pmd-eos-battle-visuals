@@ -1,136 +1,146 @@
-# ROM Research TODO
+# Research Todos
 
-## High Priority (Affects Visual Accuracy)
+## Status Overview
 
-## Foundational (Research First)
+| Area | Status | Notes |
+|------|--------|-------|
+| Entity Positioning | Complete | Items +4,+4; Monsters +12,+16; Attachment points |
+| Projectile Motion | Complete | Speed mapping, direction tables, wave patterns |
+| Animation Timing | Complete | AdvanceFrame, frame loops, task scheduler |
+| Move Effect Pipeline | Complete | Layers, handlers, flag bits |
+| effect_animation_info | Complete | All fields documented |
+| move_animation_info | Complete | All fields documented |
+| Entity Structure | Partial | Basic structure known, monster_info incomplete |
+| Screen Effects (Type 5/6) | Not Started | Low priority |
+| Sound System | Not Started | Low priority |
 
-### Pokemon Tile Positioning
-- **Current**: Using `grid_to_world()` - unclear if matches ROM
-- **Questions**:
-  - Is Pokemon centered on tile or offset?
-  - What's the sprite origin point? (feet? center?)
-  - How does this affect attachment point calculations?
-  - How does movement interpolation work?
-- **Why it matters**: All effect positioning builds on this
-- **To check**: Compare visual positioning with original game footage
+---
 
-### Animation 99/98 Spin Timing
-- **Current**: Not implemented
-- **Known from decompilation**:
-  - Type 99: 8 iterations, one per direction
-  - Type 98: 9 iterations, incrementing by 2
-  - `FUN_022ea370(2, 0x15, ...)` called each iteration
-- **Questions**:
-  - What is `FUN_022ea370`? Delay function?
-  - Is `0x15` (21) the frame count per direction?
-  - Does the Pokemon play full animation or just pose?
-- **Test**: 21 frames × 8 directions = 168 frames ≈ 2.8 sec total
+## Completed Research
 
-### Effect Spawn Position
-- **Current**: Primary on target center, others on attacker center
-- **Questions**:
-  - How does attachment_point affect spawn position relative to attacker vs target?
-  - Does the ROM calculate position differently per layer?
-  - What coordinate system is used? (pixel offset from entity origin?)
-- **Functions to investigate**:
-  - `FUN_0201cf90` - attachment point offset calculation
-  - `FUN_022be780` - main effect dispatcher
+### Entity Positioning
+- [x] Tile-to-pixel formula for items (+4, +4)
+- [x] Tile-to-pixel formula for monsters (+12, +16)
+- [x] 8.8 fixed point format confirmed
+- [x] Attachment point calculation (FUN_0201cf90)
+- [x] WAN offset structure (16 bytes per frame, 4 points)
+- [x] Special case (99, 99) = center
 
-### Looping Effect Termination
-- **Current**: Timeout after 3 loops or 1 second
-- **Questions**:
-  - What triggers loop termination in ROM?
-  - Is it tied to move execution state?
-  - Is there an explicit "stop effect" call?
-- **Functions to investigate**:
-  - `FUN_022bde50` - stop/cleanup effect
-  - `FUN_022bdec4` - force-stop effect
-  - `AnimationHasMoreFrames` - checked in loops
+### Projectile Motion
+- [x] Speed mapping (1→2, 2→3, other→6)
+- [x] Frame count calculation (24 / mapped_speed)
+- [x] Direction table (DIRECTIONS_XY) confirmed
+- [x] Wave pattern 0: Straight line
+- [x] Wave pattern 1: Vertical sine
+- [x] Wave pattern 2: Spiral/circular
+- [x] Amplitude based on range
+- [x] Phase progression (half sine over travel)
+- [x] Reverse direction (+4 & 7)
+- [x] Z priority calculation
 
-### Centre Attachment Point Data
-- **Current**: Returns Vector2.ZERO
-- **Questions**:
-  - Does WAN file contain center offset per frame?
-  - Is it in `wan_offset.center` structure?
-  - Should scraper extract this?
-- **Check in scraper**: `wan/parser.rs` - does it parse center position?
+### Animation Timing
+- [x] AdvanceFrame yields one frame
+- [x] FUN_022ea370 loops n times (not n × param)
+- [x] Task scheduler structure (FUN_022ddef8)
+- [x] Blocking loop pattern (AnimationHasMoreFrames)
+- [x] Safety timeout (100 frames in some cases)
+- [x] Pre-screen effect wait (FUN_0234ba54, up to 239 frames)
 
-## Medium Priority (Missing Features)
+### Move Effect Pipeline
+- [x] ExecuteMoveEffect as entry point
+- [x] Flag bit 3 = dual-target (FUN_023258ec)
+- [x] Flag bit 4 = skip fade-in
+- [x] Flag bit 6 = post-animation delay
+- [x] Layer 0 handler (FUN_022bfaa8) - charge/prep
+- [x] Layer 1 handler (FUN_022bed90) - secondary
+- [x] Layer 2 handler (FUN_022bfc5c) - primary
+- [x] Layer 3 handler (FUN_022be9e8) - projectile
+- [x] Dispatch types (1, 2, 5, 6)
+- [x] Razor Leaf special case (8 instances)
+- [x] Monster animation 98 (multi-direction)
+- [x] Monster animation 99 (spin)
+- [x] Type 5 effect check (FUN_022bf160)
 
-### Projectile Motion (Layer 3)
-- **Current**: Spawns on attacker, doesn't move
-- **Questions**:
-  - How is velocity calculated from `projectile_speed`?
-  - What are the wave patterns (0=straight, 1=sine, 2=spiral)?
-  - How does direction affect trajectory?
-- **Functions to investigate**:
-  - `FUN_023230fc` - projectile movement with wave patterns
-  - `FUN_0232393c` - reverse direction projectile
-  - `GetMoveAnimationSpeed` - speed lookup
-- **Data needed**:
-  - Direction from attacker to target
-  - `projectile_speed` from move_animation_info
+### Data Structures
+- [x] effect_animation_info (28 bytes, all fields)
+- [x] move_animation_info (24 bytes, all fields)
+- [x] Animation index interpretation for PROPS_UI sprites
+- [x] Direction NOT added to animation_index for effects
+- [x] Per-Pokemon override system (special_monster_move_animation)
+- [x] Effect context structure (316 bytes, key offsets)
 
-### Layer Timing
-- **Current**: All effects spawn at same time (on hit frame)
-- **Questions**:
-  - Does Layer 0 (Charge) play BEFORE attack animation?
-  - Does Layer 1 (Secondary) have different timing?
-  - Is there delay between layers?
-- **Functions to investigate**:
-  - `FUN_022bfaa8` - Layer 0 handler
-  - `FUN_022bed90` - Layer 1 handler  
-  - `FUN_022bfc5c` - Layer 2 handler
-  - `FUN_022be9e8` - Layer 3 handler
+---
 
-### Non-Blocking Effect Await
-- **Current**: Flag passed through but not used
-- **Questions**:
-  - How does ROM wait for blocking effects?
-  - What happens during the wait?
-  - Does this affect other game state?
-- **Functions to investigate**:
-  - `AnimationHasMoreFrames` - blocking check
+## Open Questions (Low Priority)
 
-## Lower Priority (Polish)
+### Flag Bits
+- [ ] Flag bits 0-2 (animation category) - values 0-7 observed, purpose unknown
+- [ ] Flag bit 5 - never observed set, purpose unknown
+- [ ] Flag bit 7 - never observed set, purpose unknown
 
-### Screen Effects (Type 5)
-- **Current**: Skipped entirely
-- **Questions**:
-  - What are screen effects? (flashes, fades, overlays?)
-  - How to render them?
-  - File index uses `+0x10C` offset - what files are these?
-- **Functions to investigate**:
-  - `FUN_022c01fc` - type 5 setup
+### Effect System
+- [ ] Exact difference between type 1 and type 2 effects (both WAN, differ by state check)
+- [ ] How looping effects (`loop_flag`) are terminated naturally
+- [ ] Complete effect_context structure (many offsets still unknown)
+- [ ] Screen effect control structure at context + 0xE8
 
-### Sound Effects
-- **Current**: Not implemented
-- **Data available**: `sfx_id` in effect_animation_info
-- **Questions**:
-  - How to map sfx_id to actual sound files?
-  - Are sounds in a separate archive?
+### Entity System
+- [ ] Complete monster_info structure (many offsets unknown)
+- [ ] Animation control structure layout
+- [ ] How elevation affects Y rendering
+- [ ] Entity struct total size
 
-### Special Move Behaviors
-- **Move 0x52 (Razor Leaf)**: Creates 8 animation instances
-- **Animation type 99**: Spin through 8 directions
-- **Animation type 98**: Multi-directional attack (9 directions)
-- **Questions**:
-  - How to detect these special cases?
-  - Should scraper flag these specially?
+### Timing
+- [ ] What param_2 in FUN_022ea370 controls (passed through but unclear)
+- [ ] Layer 0 timing relationship to two-turn move charging
 
-## Data Format Questions
+---
 
-### Effect Animation Index Interpretation
-- **Finding**: For effect sprites, `animation_index` is flat sequence index into group 0
-- **Verify**: Is this always true or only for certain types?
-- **Reference**: Move Effect System.md - "Critical Discovery" section
+## Not Planned (Will do much later after we confirm most moves are working)
 
-### Direction System
-- **Finding**: Direction only affects projectile velocity, NOT sprite selection
-- **Verify**: Test with directional effects in game
-- **Reference**: EFFECT_ANIMATION_INFO Findings.md - Direction System section
+### Screen Effects (Type 5/6)
+- Rendering method unclear
+- Files at file_index + 0x10C
+- Would need significant investigation
+- Not critical for basic move recreation
 
-## References
-- EFFECT_ANIMATION_INFO Findings.md
-- MOVE_ANIMATION_INFO Findings.md  
-- Move Effect System.md
+### Sound System
+- sfx_id mapping to actual sound files
+- Sound archive format
+- Not visual, lower priority
+
+### Complete ROM Documentation
+- Full move effect switch statement
+- All ability interactions
+- Damage calculation
+- Not related to animation system
+
+---
+
+## Potential Future Research
+
+If deeper accuracy is needed:
+
+### Layer Timing Investigation
+**Question:** Does Layer 0 (charge) play BEFORE attack animation starts for two-turn moves?
+
+**Approach:**
+1. Find a two-turn move with Layer 0 effect
+2. Trace execution in FUN_023250d4
+3. Check timing relative to ChangeMonsterAnimation call
+
+### Loop Termination Investigation
+**Question:** What triggers natural termination of looping effects?
+
+**Approach:**
+1. Find an effect with loop_flag = 1
+2. Trace what calls FUN_022bde50 for that effect
+3. Check for move completion signals
+
+### Animation Category Investigation
+**Question:** What do flag bits 0-2 (animation category 0-7) control?
+
+**Approach:**
+1. Extract all moves with different category values
+2. Compare behavior in-game
+3. Trace FUN_022bfd58 callers
