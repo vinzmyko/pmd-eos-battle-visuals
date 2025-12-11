@@ -96,6 +96,7 @@ This repository contains reverse engineering research for Pokémon Mystery Dunge
 | Value | Animation | Notes |
 |-------|-----------|-------|
 | 0-12 | Standard | Walk, Attack, Sleep, etc. |
+| 13-34 | Starter-Specific | Wake, Eat, Tumble, Pose, Nod, etc. |
 | 98 | Multi-direction | 9 attacks, +2 direction each |
 | 99 | Spin | 8 directions sequentially |
 
