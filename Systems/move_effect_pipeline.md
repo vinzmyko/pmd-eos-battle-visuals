@@ -403,6 +403,21 @@ if (bVar7) {
 }
 ```
 
+Based on the Move Animation Info struct these are the only moves where flag bit 3 is true.
+
+**Affected Moves:**
+| Move Name | Move ID | Purpose |
+|----------|---------|---------|
+| Skill Swap | 137 | Exchange abilities |
+| Guard Swap | 448 | Exchange Defense/Sp.Def stat changes |
+| Switcheroo | 482 | Exchange held items |
+| Heart Swap | 506 | Exchange all stat changes |
+| Power Swap | 513 | Exchange Attack/Sp.Atk stat changes |
+
+**Visual Purpose:** The simultaneous effect on both Pokemon represents the exchange/swap happening between them.
+
+**Note:** Only the primary layer is duplicated. Charge effects still play on attacker only, and projectile effects still travel from attacker to target.
+
 ### Flag Bit 4: Skip Fade-In
 
 **Evidence:** `FUN_02324e78`
