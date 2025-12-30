@@ -136,6 +136,153 @@ else {
 
 **For directional effects:** Direction (0-7) is NOT added to animation_index for effect sprites. Direction only affects projectile velocity.
 
+## Animation Sequence Resolution
+
+**CRITICAL:** The `animation_index` field may have direction added to it at runtime based on sprite sequence count.
+
+### Directional Effect Logic
+
+The ROM determines whether an effect uses 8 pre-rotated animation sequences or a single sequence based on the sprite's sequence count.
+
+**Rule:** Direction (0-7) is added to `animation_index` if and only if `sequence_count % 8 == 0`.
+
+**Evidence:** `FUN_022bdfc0`
+```c
+// 1. Get base animation_index from effect_animation_info
+*(int *)(param_1 + 0x50) = peVar2->animation_index;
+
+// 2. Get sprite sequence count
+if (anim_type != 5 && anim_type != 6) {  // Skip for screen effects
+    uVar3 = FUN_0201da20(*(short *)(param_1 + 0x64));  // sprite_id
+    *(undefined4 *)(param_1 + 0x10) = uVar3;  // Store sequence_count
+}
+
+// 3. Conditionally add direction to animation_index
+iVar6 = *(int *)(param_1 + 0x1c);  // direction (0-7, or -1 if none)
+if ((iVar6 != -1) && (sequence_count % 8 == 0)) {
+    *(int *)(param_1 + 0x50) += iVar6;  // animation_index += direction
+}
+```
+
+### Sequence Count Lookup
+
+Sequence count is retrieved from the WAN_TABLE via sprite_id.
+
+**Evidence:** `FUN_0201da20`
+```c
+short FUN_0201da20(short sprite_id) {
+    wan_table* table = *(wan_table**)(0x020AFC64 + 4);
+    wan_table_entry* entry = &table->sprites[sprite_id];
+    wan_header* header = entry->sprite_start;  // offset 0x30
+    return LAB_0201da00(header);
+}
+```
+
+#### WAN_TABLE Entry Structure
+
+```c
+struct wan_table_entry {
+    char path[32];                   // 0x00: Null-terminated path
+    bool8 file_externally_allocated; // 0x20
+    uint8_t source_type;             // 0x21: 1=direct file, 2=pack file
+    int16_t pack_id;                 // 0x22
+    int16_t file_index;              // 0x24
+    uint8_t field5_0x26;
+    uint8_t field6_0x27;
+    uint32_t iov_len;                // 0x28
+    int16_t reference_counter;       // 0x2C
+    uint8_t field9_0x2e;
+    uint8_t field10_0x2f;
+    wan_header* sprite_start;        // 0x30: Pointer to WAN header
+    void* iov_base;                  // 0x34: Points to SIR0 container
+};
+// Total size: 0x38 (56 bytes)
+```
+
+### Sequence Count Extraction from WAN Header
+
+**Evidence:** `LAB_0201da00`
+```c
+short LAB_0201da00(wan_header* header) {
+    uint8_t sprite_type = *(uint8_t*)(header + 0x8);
+    void* ptr_anim_info = *(void**)(header + 0x0);
+    
+    if (sprite_type == 0 || sprite_type == 2) {
+        // Effect sprites (PROPS_UI): return sequence count in group 0
+        void* anim_group_table = *(void**)(ptr_anim_info + 0x8);
+        return *(int16_t*)(anim_group_table + 0x4);  // anim_length
+    } else {
+        // Character sprites (CHARA): return number of animation groups
+        return *(int16_t*)(ptr_anim_info + 0xC);  // nb_anim_groups
+    }
+}
+```
+
+### Sprite Types
+
+| Value | Name | Sequence Count Source |
+|-------|------|----------------------|
+| 0 | PROPS_UI (Effects) | `anim_group_table[0].anim_length` |
+| 1 | CHARA (Characters) | `ptr_anim_info->nb_anim_groups` |
+| 2 | Unknown | Same as type 0 |
+
+### The % 8 Test
+
+The condition `sequence_count % 8 == 0` is implemented via bit manipulation:
+
+**Evidence:** Original decompiled code
+```c
+if ((iVar6 != -1) &&
+   (uVar5 = *(int *)(param_1 + 0x10) >> 0x1f,
+   (*(int *)(param_1 + 0x10) * 0x20000000 + uVar5 >> 0x1d | uVar5 << 3) == uVar5))
+```
+
+This tests for 32-bit overflow when multiplying by 0x20000000:
+
+| sequence_count | × 0x20000000 | Overflows to 0? | Result |
+|----------------|--------------|-----------------|---------|
+| 0 | 0 | N/A | TRUE (but no sequences exist) |
+| 1-7 | Non-zero | No | FALSE |
+| **8** | **0x100000000** | **Yes → 0** | **TRUE** |
+| 9-15 | Non-zero | No | FALSE |
+| **16** | **0x200000000** | **Yes → 0** | **TRUE** |
+| 50 | Wraps to non-zero | No | FALSE |
+
+### Practical Examples
+
+#### Water Gun (Effect 334)
+- File index: 0
+- Base animation_index: 45
+- Sequence count in file 0: 50
+- **50 % 8 = 2 ≠ 0**
+- **Result:** NOT directional
+- Direction only affects projectile translation (X/Y movement)
+- Single animation sequence used regardless of attacker direction
+
+#### Shadow Sneak (Effect 479)
+- File index: 184
+- Base animation_index: 8
+- Sequence count in file 184: 16
+- **16 % 8 = 0**
+- **Result:** DIRECTIONAL
+- Final animation_index = 8 + direction (0-7)
+- Sequences 8-15 are 8 pre-rotated variants
+- Used for effects that must visually rotate
+
+### Summary: Directional vs Non-Directional
+
+**Directional Effects** (sequence_count % 8 == 0):
+- ROM adds direction (0-7) to base animation_index
+- WAN file contains 8 consecutive sequences with identical frame counts
+- Each sequence is a pre-rotated version of the same effect
+- Used for effects that must visually rotate (shadows, directional beams)
+
+**Non-Directional Effects** (sequence_count % 8 != 0):
+- ROM uses base animation_index directly (no direction added)
+- Single animation sequence regardless of attacker direction
+- Direction only affects projectile translation via velocity vectors
+- Used for symmetric effects (particles, explosions, splashes)
+
 ### sfx_id (offset 0x10)
 
 Sound effect to play when animation starts.
@@ -307,5 +454,7 @@ if (0x1f < (int)uVar7) { ... }
 | `FUN_022bde50` | `0x022bde50` | Stop/cleanup effect |
 | `FUN_022bdec4` | `0x022bdec4` | Force-stop effect |
 | `FUN_0201cf90` | `0x0201cf90` | Calculate attachment point offset |
+| `FUN_0201da20` | `0x0201da20` | Sprite sequence count lookup from WAN_TABLE |
+| `LAB_0201da00` | `0x0201da00` | Extract sequence count from WAN header |
 | `SetAnimationForAnimationControl` | - | Configure animation parameters |
 | `SetAnimationForAnimationControlInternal` | `0x0201C5C4` | Inner animation setup (critical group/sequence logic) |
