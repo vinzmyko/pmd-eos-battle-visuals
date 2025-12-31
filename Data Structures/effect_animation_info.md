@@ -138,6 +138,8 @@ else {
 
 ## Animation Sequence Resolution
 
+> See `Systems/animation_selection.md` for sprite type routing.
+
 **CRITICAL:** The `animation_index` field may have direction added to it at runtime based on sprite sequence count.
 
 ### Directional Effect Logic
@@ -161,20 +163,6 @@ if (anim_type != 5 && anim_type != 6) {  // Skip for screen effects
 iVar6 = *(int *)(param_1 + 0x1c);  // direction (0-7, or -1 if none)
 if ((iVar6 != -1) && (sequence_count % 8 == 0)) {
     *(int *)(param_1 + 0x50) += iVar6;  // animation_index += direction
-}
-```
-
-### Sequence Count Lookup
-
-Sequence count is retrieved from the WAN_TABLE via sprite_id.
-
-**Evidence:** `FUN_0201da20`
-```c
-short FUN_0201da20(short sprite_id) {
-    wan_table* table = *(wan_table**)(0x020AFC64 + 4);
-    wan_table_entry* entry = &table->sprites[sprite_id];
-    wan_header* header = entry->sprite_start;  // offset 0x30
-    return LAB_0201da00(header);
 }
 ```
 
@@ -217,14 +205,6 @@ short LAB_0201da00(wan_header* header) {
     }
 }
 ```
-
-### Sprite Types
-
-| Value | Name | Sequence Count Source |
-|-------|------|----------------------|
-| 0 | PROPS_UI (Effects) | `anim_group_table[0].anim_length` |
-| 1 | CHARA (Characters) | `ptr_anim_info->nb_anim_groups` |
-| 2 | Unknown | Same as type 0 |
 
 ### The % 8 Test
 
