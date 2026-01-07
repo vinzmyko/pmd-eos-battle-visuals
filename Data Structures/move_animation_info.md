@@ -165,6 +165,37 @@ Specifies which sprite animation the attacking monster performs.
 | 98 (0x62) | Multi-direction | 9 attacks, direction += 2 each |
 | 99 (0x63) | Spin | 8 directions sequentially |
 
+**Type 98 Moves (Multi-direction):**
+
+9 iterations, direction increments by 2 each time, 2 frames per direction (18 frames total).
+
+| Move ID | Move Name |
+|---------|-----------|
+| 18 | Cut |
+| 362 | UNKNOWN (possibly unused) |
+
+**Type 99 Moves (Spin):**
+
+8 iterations through all directions sequentially, 2 frames per direction (16 frames total).
+
+| Move ID | Move Name |
+|---------|-----------|
+| 31 | Weather Ball |
+| 166 | Egg Bomb |
+| 213 | Mud Slap |
+| 277 | Present |
+| 285 | Bone Rush |
+| 290 | Bonemerang |
+| 309 | Mist Ball |
+| 329 | Leech Seed |
+| 408 | Item Toss |
+| 486 | Seed Bomb |
+| 501 | Mud Bomb |
+| 504 | Worry Seed |
+| 543-546 | UNKNOWN (likely system/dummy entries) |
+
+> See `Systems/move_effect_pipeline.md` section "Special Monster Animation Types" for implementation details on types 98/99.
+
 **Evidence:** Spin animation (99) in `FUN_023250d4`
 ```c
 if (iVar9 == 99) {

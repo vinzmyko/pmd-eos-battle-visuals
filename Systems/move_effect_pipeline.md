@@ -6,7 +6,7 @@
 - `PlayMoveAnimation` handles standard single-target effect playback
 - `FUN_023258ec` handles dual-target effects (flag bit 3)
 - Four effect layers can play simultaneously (charge, secondary, primary, projectile)
-- Special monster animations 98/99 trigger multi-directional attacks
+- Special monster animations 98/99 trigger multi-directional attacks with unique spawning behavior
 
 ## Pipeline Overview
 ```
@@ -443,11 +443,59 @@ if (bVar3) {
 }
 ```
 
-## Special Monster Animations
+## Special Monster Animation Types (98/99)
 
-### Animation Type 99: Spin Attack
+Types 98 and 99 are special monster animation modes that use a simplified effect spawning pattern distinct from normal animations (types 0-12).
 
-Monster rotates through all 8 directions:
+### Key Differences from Normal Animations
+
+**Normal Animations (types 0-12):**
+```c
+ChangeMonsterAnimation(entity, anim_type, direction);
+
+for (frame = 0; frame < 0x78; frame++) {
+    AdvanceFrame('Y');
+    flags = FUN_0201d1d4(entity + 0xb);  // Read WAN frame flags
+    
+    // HIT FRAME: bit 2 triggers effect spawning
+    if ((flags & 2) != 0 && !effect_spawned) {
+        FUN_02325644(&params, entity, move, ...);  // Spawn effect on hit frame
+        effect_spawned = true;
+    }
+    
+    // ANIMATION COMPLETE: bit 1
+    if ((flags & 1) != 0) break;
+}
+```
+
+**Type 99 (Spin) - Effect spawns once, animation loops:**
+```c
+FUN_02325644(&params, entity, move, ...);  // Effect spawns ONCE at start
+
+for (i = 0; i < 8; i++) {
+    direction = (direction + 1) & 7;  // Increment direction
+    ChangeMonsterAnimation(entity, '\0', direction);
+    FUN_022ea370(2, 0x15, ...);  // Fixed 2 frames per direction
+}
+// Total: 16 frames
+```
+
+**Type 98 (Multi-direction) - Effect spawns once, direction increments by 2:**
+```c
+FUN_02325644(&params, entity, move, ...);  // Effect spawns ONCE at start
+
+for (i = 0; i < 9; i++) {
+    current_dir = direction & 7;
+    ChangeMonsterAnimation(entity, '\0', current_dir);
+    FUN_022ea370(2, 0x15, ...);  // Fixed 2 frames per direction
+    direction = current_dir + 2;  // Skip one direction (+2)
+}
+// Total: 18 frames
+```
+
+### Type 99: Spin Animation
+
+Monster rotates through all 8 directions sequentially.
 
 **Evidence:** `FUN_023250d4`
 ```c
@@ -463,28 +511,109 @@ if (iVar9 == 99) {
 }
 ```
 
-**Total duration:** 8 directions × 2 frames = 16 frames
+**Total duration:** 8 directions × 2 frames = 16 frames (~0.27 seconds)
 
-### Animation Type 98: Multi-Directional Attack
+### Type 98: Multi-Directional Attack
 
-Monster attacks in 9 directions, incrementing by 2:
+Monster attacks in 9 directions, incrementing by 2 (skipping every other direction).
 
 **Evidence:** `FUN_023250d4`
 ```c
 else if (iVar9 == 0x62) {  // 98 decimal
     uVar11 = (uint)*(byte *)(iVar17 + 0x4c);  // Current direction
-    FUN_02325644(&local_3c, param_1, param_2, uVar7);
+    FUN_02325644(&local_3c, param_1, param_2, uVar7);  // Spawn secondary effect
     
     for (iVar9 = 0; iVar9 < 9; iVar9++) {
         dVar18 = uVar11 & 7;
         ChangeMonsterAnimation((entity *)param_1, '\0', dVar18);
-        FUN_022ea370(2, 0x15, dVar19, uVar7);
+        FUN_022ea370(2, 0x15, dVar19, uVar7);  // 2 frames per direction
         uVar11 = dVar18 + 2;  // Increment by 2 (skip directions)
     }
 }
 ```
 
-**Total duration:** 9 iterations × 2 frames = 18 frames
+**Total duration:** 9 iterations × 2 frames = 18 frames (~0.3 seconds)
+
+### Effect Spawning (FUN_02325644)
+
+Spawns **layer 1** (secondary) effect only, before the direction loop begins.
+
+**Evidence:** `FUN_02325644`
+```c
+void FUN_02325644(ushort *param_1, int *param_2, int param_3, int param_4)
+{
+    apparent_weather = GetApparentWeather((entity *)param_2);
+    uVar1 = GetMoveAnimationId((move *)(uint)*(ushort *)(param_3 + 4), apparent_weather, (bool)param_4);
+    pmVar2 = GetMoveAnimation((uint)uVar1);
+    
+    // Only spawns if layer 1 effect exists
+    if (*param_1 == 0 || pmVar2->field_0x2 == 0) {
+        return;
+    }
+    
+    FUN_02325d7c(param_1, 1, param_4, iVar3);
+    AdvanceFrame('Z');
+    iVar3 = FUN_022bed90(param_1, ...);  // Layer 1 handler
+    FUN_022e6d68(iVar3, param_2, 1);     // Attach to entity
+}
+```
+
+**Key Points:**
+- Effect spawns **once** at the start
+- Uses **layer 1** (secondary effect) only
+- Effect plays independently while sprite animation loops
+- No frame flag synchronization needed
+
+### Sound Effect Timing
+
+Sound plays **once before the direction loop**, same as the effect:
+
+**Evidence:** `FUN_023250d4`
+```c
+// Sound plays here, before type 98/99 check
+uVar11 = FUN_022bf0f4((int)*(short *)(iVar17 + 4), (uint)uVar5);
+if (uVar11 != 0x3f00) {
+    PlaySeByIdIfNotSilence(uVar11 & 0xffff);
+}
+
+// Then type 98/99 handling
+if (iVar9 == 99) {
+    FUN_02325644(...);  // Effect
+    // direction loop...
+}
+```
+
+### Damage Application
+
+Damage is applied **after** animation completes, in the caller context.
+
+**Evidence:** `FUN_02322374` calling sequence
+```c
+// Animation plays (including types 98/99)
+FUN_02322ddc((int *)param_1, (byte *)move, ...);
+
+// THEN damage is calculated and applied
+ExecuteMoveEffect(&local_128, (entity *)param_1, move, ...);
+```
+
+**Key insight:** No synchronization needed between animation and damage for types 98/99. The effect spawns at the start, the sprite animation plays through all directions with fixed timing, then damage is applied after completion.
+
+### Implementation Summary
+
+For recreation of types 98/99:
+
+1. **Sound:** Play sound effect once (if not 0x3F00)
+2. **Effect:** Spawn layer 1 effect once via `FUN_022bed90` equivalent
+3. **Animation Loop:**
+   - Type 99: 8 iterations, direction += 1, 2 frames each (16 total)
+   - Type 98: 9 iterations, direction += 2, 2 frames each (18 total)
+4. **Completion:** Animation ends, caller handles damage separately
+
+**Advantages:**
+- Simpler than normal animations (no WAN frame flag parsing)
+- Fixed timing (always 2 frames per direction)
+- Effect management is straightforward (spawn once, plays independently)
+- No complex synchronization between animation frames and effect spawning
 
 ## Animation ID Resolution
 
@@ -575,6 +704,11 @@ If type 5 found, calls `FUN_0234ba54` to wait for screen readiness.
 | `FUN_022bfd8c` | `0x022bfd8c` | Read flag bit 4 |
 | `FUN_022bfdac` | `0x022bfdac` | Read flag bit 5 |
 | `FUN_022bfdcc` | `0x022bfdcc` | Read flag bit 6 |
+| `FUN_023250d4` | `0x023250d4` | Monster animation handler (types 98/99 logic) |
+| `FUN_02325644` | `0x02325644` | Spawn layer 1 effect (types 98/99) |
+| `FUN_02322374` | `0x02322374` | Higher caller - handles damage after animation |
+| `FUN_02322ddc` | `0x02322ddc` | Caller - sets up animation context |
+| `FUN_0201d1d4` | `0x0201d1d4` | Read WAN frame flags (NOT used for 98/99) |
 | `GetMoveAnimation` | - | Look up move_animation_info |
 | `GetEffectAnimation` | - | Look up effect_animation_info |
 | `GetMoveAnimationId` | - | Resolve animation ID with weather/charging |

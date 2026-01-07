@@ -6,6 +6,7 @@
 - `FUN_022ea370(n, ...)` advances exactly n frames
 - Blocking animations loop on `AnimationHasMoreFrames` until complete
 - Non-blocking animations fire-and-forget (no wait loop)
+- Special monster animation types 98/99 use fixed 2-frame-per-direction timing
 - Underlying system is a cooperative task scheduler
 
 ## AdvanceFrame
@@ -56,7 +57,7 @@ undefined4 FUN_022ea370(int param_1, undefined4 param_2, undefined4 param_3, und
 | Call | Meaning | Context |
 |------|---------|---------|
 | `FUN_022ea370(1, 0x4a, ...)` | 1 frame delay | Pre-animation setup |
-| `FUN_022ea370(2, 0x15, ...)` | 2 frame delay | Per-direction in spin animation |
+| `FUN_022ea370(2, 0x15, ...)` | 2 frame delay | Per-direction in spin animation (types 98/99) |
 | `FUN_022ea370(4, 0x4a, ...)` | 4 frame delay | Pre-move effect |
 
 ## Blocking Animation Loop
@@ -256,6 +257,45 @@ if (-1 < effect_handle) {
 
 `FUN_022bde50` stops the effect and frees resources.
 
+## Special Animation Types (98/99) Timing
+
+Monster animation types 98 and 99 use fixed timing that differs from normal animations.
+
+> See `Systems/move_effect_pipeline.md` section "Special Monster Animation Types" for complete details.
+
+### Type 99 (Spin) - 16 Frames Total
+
+Loops through all 8 directions sequentially:
+```c
+for (direction = 0; direction < 8; direction++) {
+    ChangeMonsterAnimation(entity, '\0', current_direction);
+    FUN_022ea370(2, 0x15, direction, param);  // 2 frames per direction
+    current_direction = (current_direction + 1) & 7;
+}
+```
+
+**Total: 8 directions × 2 frames = 16 frames (~0.27 seconds)**
+
+### Type 98 (Multi-direction) - 18 Frames Total
+
+Loops through 9 directions, incrementing by 2 each time:
+```c
+for (i = 0; i < 9; i++) {
+    current_dir = direction & 7;
+    ChangeMonsterAnimation(entity, '\0', current_dir);
+    FUN_022ea370(2, 0x15, current_dir, param);  // 2 frames per direction
+    direction = current_dir + 2;  // Skip one direction
+}
+```
+
+**Total: 9 iterations × 2 frames = 18 frames (~0.3 seconds)**
+
+### Key Differences from Normal Animations
+
+- **Normal animations:** Variable timing based on WAN frame data, effect spawns on hit frame (flagged in WAN)
+- **Types 98/99:** Fixed 2-frame timing, effect spawns once at start before direction loop
+- **No synchronization:** Effect plays independently while sprite animation loops through directions
+
 ## Timing Summary
 
 | Action | Function | Frames |
@@ -265,19 +305,8 @@ if (-1 < effect_handle) {
 | Animation complete wait | `while (AnimationHasMoreFrames(...))` | Variable |
 | Pre-screen effect wait | `FUN_0234ba54` | Up to 239 |
 | Safety timeout | Loop counter | Usually 100 |
-
-## Spin Animation Timing (Type 99)
-
-For monster animation type 99 (spin through 8 directions):
-```c
-for (direction = 0; direction < 8; direction++) {
-    ChangeMonsterAnimation(entity, '\0', current_direction);
-    FUN_022ea370(2, 0x15, direction, param);  // 2 frames per direction
-    current_direction = (current_direction + 1) & 7;
-}
-```
-
-Total: 8 directions × 2 frames = 16 frames (~0.27 seconds)
+| Type 99 spin animation | Fixed loop | 16 (8 directions × 2) |
+| Type 98 multi-direction | Fixed loop | 18 (9 iterations × 2) |
 
 ## Open Questions
 
@@ -298,3 +327,4 @@ Total: 8 directions × 2 frames = 16 frames (~0.27 seconds)
 | `FUN_022bde50` | `0x022bde50` | Stop/cleanup effect |
 | `FUN_0234ba54` | `0x0234ba54` | Pre-screen effect wait |
 | `AnimationDelayOrSomething` | - | Standard post-animation delay |
+| `FUN_023250d4` | `0x023250d4` | Monster animation handler (types 98/99 logic) |
