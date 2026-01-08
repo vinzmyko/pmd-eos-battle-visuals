@@ -117,6 +117,116 @@ SetAnimationForAnimationControl(
 );
 ```
 
+## Animation State Management
+
+### Animation State Check (FUN_0201d1b0)
+
+Checks if WAN animation is still playing by examining the animation_control bitfield.
+
+**Evidence:** `FUN_0201d1b0`
+```c
+bool FUN_0201d1b0(ushort *param_1)  // param_1 = &animation_control.some_bitfield
+{
+    ushort bitfield = *param_1;
+    
+    if ((bitfield & 0x2000) != 0)    // Bit 13 = COMPLETED/STOPPED
+        return false;
+    
+    return (bitfield & 0x8000) != 0;  // Bit 15 = ACTIVE
+}
+```
+
+Used by effect tick system to determine if animation should continue or cleanup.
+
+### Animation Control Bitfield
+
+The `some_bitfield` at offset 0x00 of animation_control contains critical state flags.
+
+| Bit | Mask | Name | Meaning |
+|-----|------|------|---------|
+| 15 | 0x8000 | ACTIVE | Animation initialized and playing |
+| 13 | 0x2000 | COMPLETED | Animation has finished (signals termination) |
+| 12 | 0x1000 | LOOPING | Animation will restart instead of stopping |
+| 0-11, 14 | - | - | Various state flags |
+
+### Bit 15: ACTIVE Flag
+
+Set during initialization to mark animation as valid/running.
+
+**Evidence:** `SetAnimationForAnimationControlInternal`
+```c
+anim_ctrl->some_bitfield = 0;  // Clear all bits
+// ... initialization ...
+uVar5 = anim_ctrl->some_bitfield | 0x8000;  // Set active bit
+anim_ctrl->some_bitfield = uVar5;
+```
+
+Checked by `FUN_0201d1b0` and rendering code to validate animation state.
+
+### Bit 13: COMPLETED Flag
+
+Set by WAN animation system when final frame is reached. Signals that animation should terminate.
+
+**Evidence:** Effect tick checking completion
+```c
+bVar6 = FUN_0201d1b0((ushort *)(param_1 + 0x1a));  // Returns FALSE if bit 13 set
+
+if (!bVar6) {
+    // Animation completed - cleanup or loop
+    FUN_022bdcbc(...);
+}
+```
+
+For non-looping animations, bit 13 triggers auto-termination in the effect lifecycle system.
+
+### Bit 12: LOOPING Flag
+
+When set, animation restarts instead of setting bit 13 on completion.
+
+**Evidence:** `SetAnimationForAnimationControlInternal`
+```c
+uVar5 = anim_ctrl->some_bitfield | 0x8000;  // Set active bit
+anim_ctrl->some_bitfield = uVar5;
+
+if ((char)loop_flag != '\0') {
+    anim_ctrl->some_bitfield = uVar5 | 0x1000;  // Set loop bit (0x1000 = bit 12)
+}
+```
+
+Used for continuous effects like status condition visuals or lingering move effects.
+
+## Animation Lifecycle
+```
+1. INITIALIZATION
+   SetAnimationForAnimationControl(anim_ctrl, ...)
+       ↓
+   some_bitfield = 0x8000 (ACTIVE)
+   If loop_flag: some_bitfield |= 0x1000 (LOOPING)
+
+2. PLAYBACK
+   Per frame:
+   - FUN_0201d1b0() checks ACTIVE && !COMPLETED
+   - SwitchAnimationControlToNextFrame() advances frame
+   - Meta-frame renderer draws current frame
+
+3. COMPLETION
+   Non-looping:
+       Last frame → WAN system sets bit 13 (COMPLETED)
+       ↓
+       FUN_0201d1b0() returns FALSE
+       ↓
+       Effect lifecycle terminates
+
+   Looping:
+       Last frame → WAN system restarts (bit 12 set)
+       ↓
+       FUN_0201d1b0() returns TRUE (no COMPLETED bit)
+       ↓
+       Animation continues indefinitely
+```
+
+> See `Systems/effect_lifecycle.md` for how bit 13 triggers auto-termination and how bit 12 enables continuous effects.
+
 ## SetAnimationForAnimationControl Parameters
 
 ```c

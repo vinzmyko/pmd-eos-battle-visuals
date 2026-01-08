@@ -244,6 +244,157 @@ if ((ushort)param_2[2] == DAT_02323914) {
 
 Called after certain projectile animations and in move effect pipeline when flag bit 6 is set.
 
+## Main Loop Integration
+
+The dungeon main frame handler calls the effect tick system every frame.
+
+**Evidence:** `FUN_0234c1d8`
+```c
+void FUN_0234c1d8(...)  // Dungeon main loop
+{
+    // ... other frame systems (input, physics, AI, etc.) ...
+    
+    if (*DAT_0234c2ec == 0) {
+        FUN_022bf764((short *)0x0, ...);  // Tick effects with default camera
+    }
+    else {
+        FUN_022bf764((short *)(*DAT_0234c2ec + 0x1a224), ...);  // Tick with dungeon camera
+    }
+    
+    // ... rendering, UI updates, etc. ...
+}
+```
+
+`FUN_022bf764` iterates all 32 effect slots and calls `FUN_022bf4f0` for each.
+
+**Evidence:** `FUN_022bf764`
+```c
+void FUN_022bf764(short *param_1, ...)
+{
+    piVar3 = (int *)*DAT_022bf7cc;  // Effect pool base
+    iVar2 = 0;
+    do {
+        uVar1 = FUN_022bf4f0(piVar3, param_1);  // Tick individual effect
+        iVar2 = iVar2 + 1;
+        piVar3 = piVar3 + 0x4f;  // 0x4f * 4 = 0x13C bytes per slot
+    } while (iVar2 < 0x20);  // 32 iterations
+    
+    return uVar1;
+}
+```
+
+## AnimationHasMoreFrames Behavior
+
+This function is used in wait loops but does NOT check animation frames directly. Instead, it searches the effect pool by `instance_id` and returns based on the `is_non_blocking` flag.
+
+**Evidence:** `AnimationHasMoreFrames`
+```c
+bool AnimationHasMoreFrames(int param_1)  // param_1 = instance_id
+{
+    if (param_1 == -1) {
+        return false;  // Invalid handle
+    }
+    
+    // Search for effect in pool by instance_id
+    iVar1 = 0;
+    iVar2 = *DAT_022bf960;
+    while (true) {
+        if (0x1f < iVar1) {
+            return false;  // Not found (effect cleaned up)
+        }
+        if (*(int *)(iVar2 + 0xc) == param_1) break;  // Found matching instance_id
+        iVar1 = iVar1 + 1;
+        iVar2 = iVar2 + 0x13c;
+    }
+    
+    // Return TRUE if effect is blocking (is_non_blocking == 0)
+    return *(char *)(iVar2 + 0x60) == '\0';
+}
+```
+
+### What This Means
+
+`AnimationHasMoreFrames` returns:
+- **TRUE** if effect exists in pool AND `is_non_blocking == 0` (blocking effect)
+- **FALSE** if effect handle is -1, effect cleaned up, or `is_non_blocking != 0` (non-blocking)
+
+It does NOT directly check animation frame count or completion. Instead, it relies on:
+1. Effect lifecycle system setting `instance_id = -1` when cleanup occurs
+2. `is_non_blocking` flag to determine if caller should wait
+
+## Wait Loop Exit Conditions
+
+| Condition | Trigger | AnimationHasMoreFrames Returns |
+|-----------|---------|-------------------------------|
+| Effect handle == -1 | Never allocated or explicitly stopped | FALSE (exits loop) |
+| Effect not in pool | Cleaned up by tick function | FALSE (exits loop) |
+| is_non_blocking != 0 | Non-blocking effect spawned | FALSE (exits immediately) |
+| Frame counter >= 100 | Safety timeout | N/A (loop exits via counter) |
+
+**Evidence:** Typical wait loop with timeout
+```c
+if (play_now != '\0') {
+    iVar5 = 0;
+    while ((iVar5 < 100 && 
+           (bVar2 = AnimationHasMoreFrames((int)(short)iVar4), bVar2 != '\0'))) {
+        AdvanceFrame('B');
+        iVar5 = iVar5 + 1;
+    }
+    iVar4 = -1;  // Invalidate handle after wait
+}
+```
+
+### The 100-Frame Timeout
+
+**Purpose:** Safety fallback to prevent infinite loops if effect lifecycle fails.
+
+**Normal behavior:**
+1. Effect plays animation
+2. Animation completes → bit 13 set in animation_control
+3. Effect tick calls cleanup → `instance_id = -1`
+4. `AnimationHasMoreFrames` returns FALSE → loop exits
+
+**Timeout scenario:**
+- Bug prevents cleanup from occurring
+- Loop reaches 100 iterations (~1.67 seconds at 60fps)
+- Loop exits via counter, not `AnimationHasMoreFrames`
+
+**Critical:** The timeout is NOT the intended termination mechanism. Properly functioning effects should exit via cleanup long before 100 frames.
+
+### Looping Effects and Wait Loops
+
+For effects with `loop_flag == 1`, the 100-frame timeout IS the exit condition because:
+- Animation never sets bit 13 (restarts instead)
+- Effect tick never calls cleanup (loop flag prevents it)
+- `AnimationHasMoreFrames` keeps returning TRUE
+- Loop exits at 100 frames
+
+**This is why looping effects should NOT use blocking wait loops.** Instead:
+```c
+// WRONG: Will always timeout at 100 frames
+effect_handle = SpawnLoopingEffect(...);
+while (AnimationHasMoreFrames(effect_handle)) {  // BAD
+    AdvanceFrame();
+}
+
+// CORRECT: Spawn and manage separately
+effect_handle = SpawnLoopingEffect(...);
+// ... perform action ...
+ExecuteMoveEffect(...);
+// ... explicitly stop when done ...
+FUN_022bde50(effect_handle);
+```
+
+> See `Systems/effect_lifecycle.md` for complete lifecycle management including looping effect handling.
+
+## Cross-References
+
+> See `Systems/effect_lifecycle.md` for effect tick system (FUN_022bf764, FUN_022bf4f0)
+
+> See `Data Structures/effect_context.md` for effect slot structure and is_non_blocking field
+
+> See `Data Structures/animation_control.md` for animation state bitfield (bits 12, 13, 15)
+
 ## Effect Cleanup
 
 When animation completes or needs to be stopped:
