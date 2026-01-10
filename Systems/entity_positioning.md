@@ -6,6 +6,7 @@
 - Pixel positions stored in 8.8 fixed point format (multiply by 256)
 - Items spawn at tile corner + 4 pixels (X and Y)
 - Monsters/entities spawn at tile center X (+12), lower Y (+16) for feet positioning
+- Projectiles start at attacker pixel position, end at target tile center
 - Attachment points provide per-frame sprite offsets for effect spawning
 
 ## Coordinate Systems
@@ -63,6 +64,42 @@ When spawning effects at a tile position (no target entity), uses monster formul
 local_30 = (undefined2)((uint)((position->x * 0x18 + 0xc) * 0x100) >> 8);
 local_2e = (undefined2)((uint)((position->y * 0x18 + 0x10) * 0x100) >> 8);
 ```
+
+## Projectile Positioning
+
+Projectiles use a specific source/destination model.
+
+### Projectile Source Position
+
+Projectile starts at **attacker's current pixel position**, NOT at tile center.
+
+| Component | Formula | Description |
+|-----------|---------|-------------|
+| X | `attacker->pixel_pos.x >> 8` | Screen X pixel |
+| Y | `attacker->pixel_pos.y >> 8` | Screen Y pixel |
+
+**Evidence:** `FUN_02322f78`
+```c
+local_28 = (undefined2)((uint)param_1[3] >> 8);  // attacker->pixel_pos.x >> 8
+local_26 = (undefined2)((uint)param_1[4] >> 8);  // attacker->pixel_pos.y >> 8
+```
+
+### Projectile Destination Position
+
+Projectile ends at **target tile center**, using standard entity positioning offsets.
+
+| Component | Formula | Offset | Description |
+|-----------|---------|--------|-------------|
+| X | `(tile_x * 24 + 12) * 256 >> 8` | +12 | Tile center X |
+| Y | `(tile_y * 24 + 16) * 256 >> 8` | +16 | Below center Y (feet) |
+
+**Evidence:** `FUN_02322f78`
+```c
+local_30 = (undefined2)((uint)((*param_2 * 0x18 + 0xc) * 0x100) >> 8);   // tile_x * 24 + 12
+local_2e = (undefined2)((uint)((param_2[1] * 0x18 + 0x10) * 0x100) >> 8); // tile_y * 24 + 16
+```
+
+> See `Systems/projectile_motion.md` for complete projectile motion details.
 
 ## Attachment Points
 
@@ -132,6 +169,20 @@ struct wan_offset {
 // Size: 16 bytes per frame
 ```
 
+### Attachment Points and Projectiles
+
+**Important:** Attachment points are looked up for projectiles but **NOT applied to the trajectory source position**. The projectile always starts at the attacker's pixel position regardless of attachment point.
+
+**Evidence:** `FUN_02322f78`
+```c
+// Attachment point calculated
+FUN_0201cf90(&sStack_24, (ushort *)(param_1 + 0xb), uVar2 & 0xff);
+
+// But source position taken directly from pixel_pos
+local_28 = (undefined2)((uint)param_1[3] >> 8);  // No attachment offset added
+local_26 = (undefined2)((uint)param_1[4] >> 8);
+```
+
 ## Helper Functions
 
 **Evidence:** `SetEntityPixelPosXY`
@@ -164,6 +215,15 @@ void IncrementEntityPixelPosXY(entity *entity, uint32_t x, uint32_t y)
 | ENTITY_OFFSET_X | 12 | 0x0C |
 | ENTITY_OFFSET_Y | 16 | 0x10 |
 
+## Position Summary Table
+
+| Entity Type | X Formula | Y Formula |
+|-------------|-----------|-----------|
+| Item | `(tile * 24 + 4) * 256` | `(tile * 24 + 4) * 256` |
+| Monster/Entity | `(tile * 24 + 12) * 256` | `(tile * 24 + 16) * 256` |
+| Projectile Source | `attacker.pixel_pos.x` | `attacker.pixel_pos.y` |
+| Projectile Dest | `(tile * 24 + 12) * 256` | `(tile * 24 + 16) * 256` |
+
 ## Open Questions
 
 - Exact offset values for all sprites' attachment points (stored in WAN files, need scraper to extract)
@@ -178,3 +238,4 @@ void IncrementEntityPixelPosXY(entity *entity, uint32_t x, uint32_t y)
 | `SetEntityPixelPosXY` | - | Direct pixel position setter |
 | `IncrementEntityPixelPosXY` | - | Adds to pixel position |
 | `FUN_0201cf90` | `0x0201cf90` | Calculates attachment point offset |
+| `FUN_02322f78` | `0x02322f78` | Spawns projectile (demonstrates source/dest positions) |

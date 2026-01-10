@@ -7,6 +7,7 @@
 - `FUN_023258ec` handles dual-target effects (flag bit 3)
 - Four effect layers can play simultaneously (charge, secondary, primary, projectile)
 - Special monster animations 98/99 trigger multi-directional attacks with unique spawning behavior
+- Projectile spawning follows a specific call chain from move execution to motion handling
 
 ## Pipeline Overview
 ```
@@ -367,6 +368,46 @@ int FUN_022be9e8(ushort *param_1, undefined2 *param_2, ...)
 }
 ```
 
+## Projectile Spawn Call Chain
+
+The complete call chain for projectile spawning:
+
+```
+FUN_02322374 (Move execution coordinator)
+    │
+    ├─► FUN_02322ddc (Returns wave pattern 0/1/2)
+    │
+    └─► FUN_023230fc (Main projectile handler)
+            │
+            ├─► FUN_02322f78 (Spawns projectile effect)
+            │       │
+            │       ├─► FUN_022bf01c (Get attachment point index)
+            │       │
+            │       ├─► FUN_0201cf90 (Calculate attachment offset - NOT USED for position)
+            │       │
+            │       └─► FUN_022be9e8 (Layer 3 projectile setup)
+            │               │
+            │               └─► FUN_022be780 (Effect dispatcher, type 2)
+            │
+            └─► Animation loop (FUN_022beb2c per frame)
+```
+
+### Key Functions in Chain
+
+| Function | Address (NA) | Purpose |
+|----------|--------------|---------|
+| `FUN_02322374` | `0x02322374` | Move execution coordinator, determines wave pattern |
+| `FUN_02322ddc` | `0x02322ddc` | Returns wave pattern (0/1/2) based on move logic |
+| `FUN_02322f78` | `0x02322f78` | Spawns projectile effect with position data |
+| `FUN_023230fc` | `0x023230fc` | Main forward projectile motion handler |
+| `FUN_0232393c` | `0x0232393c` | Reverse direction projectile handler |
+| `FUN_022be9e8` | `0x022be9e8` | Layer 3 projectile effect setup |
+| `FUN_022be780` | `0x022be780` | Main effect dispatcher |
+| `FUN_022bf01c` | `0x022bf01c` | Get attachment point index with override |
+| `FUN_022bf088` | `0x022bf088` | Get attachment point for species |
+| `FUN_0201cf90` | `0x0201cf90` | Calculate attachment point offset from WAN |
+| `FUN_022beb2c` | `0x022beb2c` | Update effect position during flight |
+
 ## Effect Dispatch Types
 
 The first parameter to `FUN_022be780` indicates the handler type:
@@ -590,7 +631,8 @@ Damage is applied **after** animation completes, in the caller context.
 **Evidence:** `FUN_02322374` calling sequence
 ```c
 // Animation plays (including types 98/99)
-FUN_02322ddc((int *)param_1, (byte *)move, ...);
+FUN_02322ddc((int *)param_1, (byte *)move, (int)local_140, (uint)ptVar19, param_3,
+             iVar20 == 0);
 
 // THEN damage is calculated and applied
 ExecuteMoveEffect(&local_128, (entity *)param_1, move, ...);
@@ -679,11 +721,16 @@ bool FUN_022bf160(ushort *params)
 
 If type 5 found, calls `FUN_0234ba54` to wait for screen readiness.
 
+## Cross-References
+
+> See `Systems/projectile_motion.md` for projectile spawn positions and motion handling
+
+> See `Data Structures/effect_context.md` for trajectory field storage
+
 ## Open Questions
 
 - Full purpose of animation category (flag bits 0-2)
 - What flag bit 5 controls
-- Complete list of moves using flag bit 3 (dual-target)
 - How layer 0 (charge) timing relates to two-turn moves
 
 ## Functions Used

@@ -7,6 +7,7 @@
 - Contains animation state, positioning, resources, and lifecycle flags
 - Embedded animation_control at offset 0x68 for WAN sprite playback
 - Screen effects (types 5/6) use different control structure at offset 0xE8
+- Projectile effects store trajectory data at offsets 0x128-0x134
 
 ## Effect Pool
 
@@ -64,13 +65,13 @@ struct effect_context {
     /* 0xE4 */ int16_t screen_effect_handle; // For type 5/6
     /* 0xE8 */ uint8_t screen_effect_ctrl[0x1C]; // Screen effect control structure
     /* ... */
-    /* 0x128 */ int16_t source_x;
-    /* 0x12A */ int16_t source_y;
-    /* 0x12C */ int16_t dest_x;
-    /* 0x12E */ int16_t dest_y;
-    /* 0x130 */ uint16_t entity_id;
-    /* 0x132 */ int16_t stored_velocity_x;
-    /* 0x134 */ int16_t stored_velocity_y;
+    /* 0x128 */ int16_t source_x;          // Projectile start X (screen pixels)
+    /* 0x12A */ int16_t source_y;          // Projectile start Y (screen pixels)
+    /* 0x12C */ int16_t dest_x;            // Projectile end X (screen pixels)
+    /* 0x12E */ int16_t dest_y;            // Projectile end Y (screen pixels)
+    /* 0x130 */ uint16_t entity_id;        // Attacker entity reference
+    /* 0x132 */ int16_t stored_velocity_x; // Copied from offset 0x24
+    /* 0x134 */ int16_t stored_velocity_y; // Copied from offset 0x26
     /* 0x136 */ int16_t position_offset;   // Added to X each frame
     /* 0x13A */ uint8_t unknown_13a;
 };
@@ -159,6 +160,53 @@ if (*(short *)(param_1 + 100) == 0) return;  // offset 0x64
 if (param_2 != 0) {
     DeleteWanTableEntryVeneer(..., *(short *)(param_1 + 100));
 }
+```
+
+## Projectile Trajectory Fields (0x128-0x134)
+
+These fields are populated by `FUN_022be9e8` (Layer 3 projectile handler) and used by `FUN_023230fc` for projectile motion.
+
+### source_x / source_y (offsets 0x128, 0x12A)
+
+Projectile starting position in screen pixels. Set from attacker's pixel position.
+
+**Evidence:** `FUN_022be9e8`
+```c
+*(ushort *)(iVar10 + 0x128) = param_1[2];  // source_x from attacker
+*(ushort *)(iVar10 + 0x12a) = param_1[3];  // source_y from attacker
+```
+
+**Source calculation:** `attacker->pixel_pos.x >> 8` (8.8 fixed point to screen pixels)
+
+### dest_x / dest_y (offsets 0x12C, 0x12E)
+
+Projectile destination position in screen pixels. Set from target tile center.
+
+**Evidence:** `FUN_022be9e8`
+```c
+*(undefined2 *)(iVar10 + 300) = *param_2;    // dest_x (0x12C)
+*(undefined2 *)(iVar10 + 0x12e) = param_2[1]; // dest_y
+```
+
+**Destination calculation:** `(tile * 24 + offset) * 256 >> 8` where offset is +12 for X, +16 for Y
+
+### entity_id (offset 0x130)
+
+Reference to the attacker entity. Used for tracking which entity spawned the projectile.
+
+**Evidence:** `FUN_022be9e8`
+```c
+*(ushort *)(iVar10 + 0x130) = param_1[1];  // entity_id
+```
+
+### stored_velocity_x / stored_velocity_y (offsets 0x132, 0x134)
+
+Copied from velocity fields at offsets 0x24/0x26 during projectile setup.
+
+**Evidence:** `FUN_022be9e8`
+```c
+*(undefined2 *)(iVar10 + 0x132) = *(undefined2 *)(iVar10 + 0x24);
+*(undefined2 *)(iVar10 + 0x134) = *(undefined2 *)(iVar10 + 0x26);
 ```
 
 ## Embedded Structures
@@ -250,6 +298,8 @@ void FUN_022bdfc0(int param_1, ...)
 
 > See `Systems/animation_timing.md` for AnimationHasMoreFrames and wait loop patterns
 
+> See `Systems/projectile_motion.md` for how trajectory fields are used during flight
+
 ## Open Questions
 
 - Complete layout between offsets 0x2C-0x3C
@@ -264,6 +314,7 @@ void FUN_022bdfc0(int param_1, ...)
 | `FUN_022be44c` | `0x022be44c` | Effect allocation (find free slot) |
 | `FUN_022bdfc0` | `0x022bdfc0` | Effect initialization |
 | `FUN_022be9a0` | `0x022be9a0` | Find effect by instance_id |
+| `FUN_022be9e8` | `0x022be9e8` | Layer 3 projectile setup (sets trajectory fields) |
 | `FUN_022bf764` | `0x022bf764` | Effect pool tick (iterates 32 slots) |
 | `FUN_022bf4f0` | `0x022bf4f0` | Per-effect tick function |
 | `AnimationHasMoreFrames` | - | Check if effect still active (for wait loops) |

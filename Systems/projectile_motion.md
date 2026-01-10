@@ -7,6 +7,83 @@
 - Three wave patterns: straight (0), vertical sine (1), spiral (2)
 - Position updated per frame in 8.8 fixed point
 - Reverse direction adds 4 to direction index (180° rotation)
+- Source position is attacker's pixel position; destination is target tile center
+- Attachment points are looked up but NOT applied to projectile trajectory
+
+## Spawn Position System
+
+### Source Position (Projectile Start)
+
+Projectile starts at **attacker's current pixel position**, converted from 8.8 fixed point to screen pixels.
+
+| Component | Formula | Description |
+|-----------|---------|-------------|
+| X | `attacker->pixel_pos.x >> 8` | Screen X pixel |
+| Y | `attacker->pixel_pos.y >> 8` | Screen Y pixel |
+
+**Evidence:** `FUN_02322f78`
+```c
+local_28 = (undefined2)((uint)param_1[3] >> 8);  // attacker->pixel_pos.x >> 8
+local_26 = (undefined2)((uint)param_1[4] >> 8);  // attacker->pixel_pos.y >> 8
+```
+
+These values are passed to `FUN_022be9e8` and stored in the effect context:
+```c
+*(ushort *)(iVar10 + 0x128) = param_1[2];  // source_x
+*(ushort *)(iVar10 + 0x12a) = param_1[3];  // source_y
+```
+
+### Destination Position (Projectile End)
+
+Projectile ends at **target tile center**, using standard entity positioning offsets.
+
+| Component | Formula | Offset | Description |
+|-----------|---------|--------|-------------|
+| X | `(tile_x * 24 + 12) * 256 >> 8` | +12 | Tile center X |
+| Y | `(tile_y * 24 + 16) * 256 >> 8` | +16 | Below center Y (feet) |
+
+**Evidence:** `FUN_02322f78`
+```c
+// param_2 is target tile position
+local_30 = (undefined2)((uint)((*param_2 * 0x18 + 0xc) * 0x100) >> 8);   // tile_x * 24 + 12
+local_2e = (undefined2)((uint)((param_2[1] * 0x18 + 0x10) * 0x100) >> 8); // tile_y * 24 + 16
+```
+
+These become dest_x/dest_y in the effect context:
+```c
+*(undefined2 *)(iVar10 + 300) = *param_2;    // dest_x (offset 0x12C)
+*(undefined2 *)(iVar10 + 0x12e) = param_2[1]; // dest_y
+```
+
+### Attachment Point Handling
+
+Attachment points are looked up but **NOT added to projectile source position**.
+
+**Evidence:** `FUN_02322f78`
+```c
+// Get attachment point index from move animation (with per-Pokemon override)
+uVar2 = FUN_022bf01c((int)*(short *)(iVar5 + 4), (uint)uVar1);
+
+if (uVar2 == 0xffffffff) {
+    // No attachment point - use default offset (likely 0,0)
+    sStack_24 = *DAT_023230f8;
+    sStack_22 = DAT_023230f8[1];
+}
+else {
+    // Calculate offset from WAN sprite data
+    FUN_0201cf90(&sStack_24, (ushort *)(param_1 + 0xb), uVar2 & 0xff);
+}
+```
+
+**Key Finding:** The attachment point offset is calculated but the source position is still taken directly from attacker pixel position:
+
+```c
+// Source position - no attachment offset added
+local_28 = (undefined2)((uint)param_1[3] >> 8);  // Direct from pixel_pos
+local_26 = (undefined2)((uint)param_1[4] >> 8);  // Direct from pixel_pos
+```
+
+**Conclusion:** Attachment points may affect rendering/visual offset but do NOT modify the actual projectile trajectory source point.
 
 ## Speed System
 
@@ -134,6 +211,31 @@ sVar1 = *(short *)(DAT_02323c34 + iVar4);        // Reversed Y delta
 | Straight | 0 | No wave, direct line |
 | Vertical Sine | 1 | Up-down oscillation perpendicular to travel |
 | Spiral | 2 | Circular/helical motion |
+
+### Wave Pattern Determination
+
+Wave pattern is determined at **runtime by caller logic**, not stored in move/effect data tables.
+
+**Evidence:** `FUN_02322374`
+```c
+// Wave pattern comes from FUN_02322ddc return value
+bVar3 = FUN_02322ddc((int *)param_1, (byte *)move, (int)local_140, (uint)ptVar19, param_3,
+                     iVar20 == 0);
+uVar11 = (uint)bVar3;  // This becomes param_4 (wave pattern)
+
+// Later passed to projectile motion
+FUN_023230fc(param_1, (undefined2 *)move, (int)pmVar22, uVar11, param_3, param_5, bVar23);
+//                                                      ^^^^^^ wave pattern
+```
+
+**Reverse direction projectiles** (`FUN_0232393c`) always use wave pattern 0:
+
+**Evidence:** `ExecuteMoveEffect`
+```c
+FUN_0232393c((int)attacker, (int *)entity, (int)auStack_74, uVar11, 0);  // Always 0 for wave
+```
+
+**Implementation Recommendation:** Use wave pattern 0 (straight line) for all moves as a safe default. Wave patterns 1/2 are edge cases determined by complex game logic in `FUN_02322ddc`.
 
 ### Amplitude Calculation
 
@@ -345,11 +447,33 @@ Both are updated and cleaned up independently.
 
 Both use a quarter-wave table and derive other quadrants.
 
+## Implementation Summary
+
+For accurate projectile recreation:
+
+| Parameter | Value |
+|-----------|-------|
+| **Source X** | `attacker.pixel_pos.x >> 8` |
+| **Source Y** | `attacker.pixel_pos.y >> 8` |
+| **Dest X** | `target_tile.x * 24 + 12` |
+| **Dest Y** | `target_tile.y * 24 + 16` |
+| **Direction** | `attacker.monster_info[0x4C]` (0-7) |
+| **Wave Pattern** | `0` (straight line - safe default) |
+| **Speed** | From `move_animation_info.projectile_speed` mapped via table |
+
+## Cross-References
+
+> See `Data Structures/effect_context.md` for trajectory field storage (offsets 0x128-0x134)
+
+> See `Systems/move_effect_pipeline.md` for projectile spawn call chain
+
+> See `Systems/entity_positioning.md` for coordinate system details
+
 ## Open Questions
 
-- Exact contents of DAT_02323900 (additional direction data)
-- How param_3 (range) is determined by caller
+- Exact logic in `FUN_02322ddc` that determines wave patterns 1/2
 - Purpose of FUN_0234b4cc calls (enable/disable something)
+- Complete list of moves that use wave patterns 1 or 2
 
 ## Functions Used
 
@@ -357,8 +481,12 @@ Both use a quarter-wave table and derive other quadrants.
 |----------|--------------|---------|
 | `FUN_023230fc` | `0x023230fc` | Main projectile motion handler |
 | `FUN_0232393c` | `0x0232393c` | Reverse direction projectile handler |
+| `FUN_02322f78` | `0x02322f78` | Spawns projectile effect with position data |
+| `FUN_022be9e8` | `0x022be9e8` | Layer 3 projectile setup |
 | `FUN_022beb2c` | `0x022beb2c` | Update effect position during flight |
 | `FUN_022bde50` | `0x022bde50` | Stop/cleanup effect |
+| `FUN_022bf01c` | `0x022bf01c` | Get attachment point index with override |
+| `FUN_0201cf90` | `0x0201cf90` | Calculate attachment point offset from WAN |
 | `GetMoveAnimationSpeed` | - | Read speed from move animation table |
 | `SinAbs4096` | - | Sine with 4096-step angles |
 | `CosAbs4096` | - | Cosine with 4096-step angles |
