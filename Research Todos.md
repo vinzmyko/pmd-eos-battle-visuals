@@ -1,39 +1,49 @@
 # Research Todos
 
-## Next Steps - Client Implementation
+## Next Steps - Effect Lifecycle Investigation
 
-**Task:** Update Godot client to use directional effect sprites.
+### Priority 1: Looping Effect Termination (Ghidra)
 
-### Files to Modify
+**Problem:** Our client uses arbitrary 3-loop / 100-frame timeout for looping effects. ROM has explicit termination.
 
-1. **`move_effect_player.gd`** - Load correct sprite sheet based on direction
-   ```gdscript
-   func _load_sprite_sheet(effect_data: Dictionary, direction: int) -> Texture2D:
-       if effect_data.get("is_directional", false):
-           # Directional: append _dir{N}.png to base path
-           var base_path = effect_data["sprite_sheet"]
-           var sheet_path = "%s_dir%d.png" % [base_path, direction]
-           return load(sheet_path)
-       else:
-           # Non-directional: use path directly
-           return load(effect_data["sprite_sheet"])
-   ```
+**What we know:**
+- Looping effects (anim_type 3-5 with `loop_flag=1`) never auto-terminate
+- They require explicit `FUN_022bde50(instance_id)` call
+- Tick function `FUN_022bf4f0` skips cleanup when loop flag is set
 
-2. **`animation_sequencer.gd`** - Pass attacker's `current_direction` to effect player
+**Investigation needed:**
+1. Find all XREFs to `FUN_022bde50` (0x022bde50) - which callers are NOT user-triggered?
+2. In `ExecuteMoveEffect` - after damage application, is there effect cleanup code?
+3. Look for patterns: `if (effect_handle >= 0) { FUN_022bde50(effect_handle); }`
 
-3. **`_spawn_projectile_effect()`** - Use attacker direction for projectile sprites
+**Hypothesis:** Looping effects are stopped when:
+- Move execution completes (damage applied)
+- Entity dies/despawns
+- New action starts on same entity
+- Move is interrupted
 
-### Direction Mapping (ROM → Godot)
-| ROM Dir | Name | Rotation |
-|---------|------|----------|
-| 0 | South (Down) | 0° |
-| 1 | Southwest | Counter-clockwise from South |
-| 2 | West (Left) | 90° CCW |
-| 3 | Northwest | ... |
-| 4 | North (Up) | 180° |
-| 5 | Northeast | ... |
-| 6 | East (Right) | 270° CCW |
-| 7 | Southeast | ... |
+### Priority 2: Layer Spawn Timing
+
+**Question:** Do all 4 effect layers spawn simultaneously or sequentially?
+
+**Investigation:**
+- Trace call order in `ExecuteMoveEffect` and `PlayMoveAnimation`
+- Look for `AdvanceFrame` calls between layer handler invocations
+- Document the exact timing relationship
+
+### Priority 3: Attachment Point Implementation (Deferred)
+
+**Status:** Data is extracted and available, not yet used in client.
+
+**Current state:**
+- Scraper extracts attachment points per frame (head, lhand, rhand, center)
+- `effect_animation_info.attachment_point` field indicates which point to use
+- ROM looks up attachment points but does NOT apply them to projectile trajectory
+
+**To implement:**
+- Effect spawns at entity position + attachment point offset
+- Need to pass attachment point index through to effect player
+- Get offset from current animation frame's attachment data
 
 ---
 
@@ -57,6 +67,28 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 - Type 5 uses `file_index + 268 (0x10C)` for actual file lookup
 - Need to understand screen overlay rendering system
 - **Status:** Not implemented, returns placeholder `ScreenEffect`
+
+---
+
+## Investigation Notes (Ghidra)
+
+### FUN_022bde50 - Effect Stop Function
+- **Address (NA):** 0x022bde50
+- **Purpose:** Explicitly stops an effect by instance_id
+- **Called by:** Need to find all XREFs
+
+### Key Questions to Answer
+1. What triggers looping effect cleanup in normal move execution?
+2. Is `delay_counter` (context + 0x18) ever set to non-zero? Where?
+3. Are there entity cleanup routines that iterate active effects?
+
+### Addresses to Investigate
+| Function | Address | Purpose |
+|----------|---------|---------|
+| `FUN_022bde50` | 0x022bde50 | Stop effect by instance_id |
+| `FUN_022bf4f0` | 0x022bf4f0 | Per-effect tick |
+| `FUN_022bdfc0` | 0x022bdfc0 | Effect initialization |
+| `ExecuteMoveEffect` | ? | Main move execution |
 
 ---
 
@@ -85,70 +117,32 @@ Effect Metaframe Structure (10 bytes):
 
 ### Directional Effects ✓ (COMPLETED)
 
-**Problem Solved:** Effects now correctly render directional variants.
+**Problem Solved:** Effects now correctly render directional variants with consistent frame sizes.
 
-**Implementation:**
-- Scraper detects directionality via `sequence_count % 8 == 0`
-- Directional effects output 8 files: `{effect_id}_dir{0-7}.png`
+**Scraper Implementation:**
+- Detects directionality via `sequence_count % 8 == 0`
+- **Two-pass rendering for directional effects:**
+  1. First pass: `calculate_unified_canvas_box()` finds max bounds across all 8 directions
+  2. Second pass: Render all 8 directions using unified dimensions
+- Directional effects output 8 files: `{effect_id}_dir{0-7}.png` (all same dimensions)
 - Non-directional effects output 1 file: `{effect_id}.png`
 - JSON includes `is_directional`, `direction_count`, `base_animation_index`
 
-**ROM Behavior (from FUN_022bdfc0):**
-```
-If (sequence_count % 8 == 0) → Directional effect
-   - Direction (0-7) is ADDED to base animation_index
-   - Example: Effect 333 (Water Gun projectile) base_index=48, direction 3 → sequence 51
-   
-If (sequence_count % 8 != 0) → Non-directional effect
-   - Same animation regardless of direction
-   - Direction only affects projectile velocity
-```
+**Client Implementation:**
+- `move_resolver.gd` - Passes `is_directional` flag, builds base path without .png for directional
+- `animation_sequencer.gd` - Gets attacker direction via `attacker.get_current_direction()`, passes to effect player
+- `move_effect_player.gd` - `_get_sprite_sheet_path()` appends `_dir{N}.png` for directional effects
+- `pokemon_entity.gd` - `get_current_direction()` exposes ROM-format direction (0-7)
 
-**Verified Example - Water Gun (Move 308):**
-| Layer | Effect ID | Type | File Index | Anim Index | Notes |
-|-------|-----------|------|------------|------------|-------|
-| Secondary | 21 | WanFile0 | 0 | 17 | Reuse (attacker anim) |
-| Primary | 334 | WanFile0 | 0 | 45 | Reuse (attacker anim) |
-| **Projectile** | **333** | **WanOther** | **13** | **48** | **Actual projectile - DIRECTIONAL** |
+**Files Modified (Scraper):**
+- `src/effect_sprite_extractor.rs` - Added `calculate_unified_canvas_box()`, two-pass `process_directional_effect()`
+- `src/graphics/wan/renderer.rs` - Added `get_effect_animation_canvas_box()`, `render_effect_animation_sheet_with_canvas()`
 
-**Files Modified:**
-- `src/effect_sprite_extractor.rs` - Added `check_directional_effect()`, renders 8 sheets for directional
-- `src/move_effects_index.rs` - Added `base_animation_index` field to `SpriteEffect`
-
-### Entity Positioning ✓
-- [x] Tile-to-pixel formulas: Items (+4,+4), Monsters (+12,+16)
-- [x] 8.8 fixed point format
-- [x] Attachment point system (4 points per frame: head, lhand, rhand, center)
-- [x] Special value (99,99) = use sprite center
-
-### Projectile Motion ✓
-- [x] Speed mapping: raw values 1→2, 2→3, other→6
-- [x] Frame counts: 24/speed (12, 8, or 4 frames)
-- [x] Direction table (DIRECTIONS_XY) with 8 directions
-- [x] Wave patterns: 0=straight, 1=vertical sine, 2=spiral
-- [x] Source position = attacker pixel_pos, dest = target tile center
-- [x] **Finding:** Attachment points looked up but NOT applied to trajectory
-
-### Move Effect Pipeline ✓
-- [x] 4 effect layers: 0=charge, 1=secondary, 2=primary, 3=projectile
-- [x] Flag bit 3 = dual-target (both attacker and target)
-- [x] Special monster animation types 98/99:
-  - Type 99: Spin through 8 directions, 2 frames each (16 total)
-  - Type 98: Multi-direction, 9 iterations +2 direction each (18 total)
-  - Both spawn effect ONCE at start, bypass hit-frame system
-
-### Effect Lifecycle ✓
-- [x] Pool of 32 effects, 316 bytes each
-- [x] Main loop: `FUN_022bf764` ticks all slots via `FUN_022bf4f0`
-- [x] Auto-termination: Non-looping effects cleanup when `animation_control` bit 13 set
-- [x] Looping effects (anim_type 3-5 with loop flag): Never auto-terminate, require explicit `FUN_022bde50` call
-- [x] 100-frame timeout is safety fallback, not intended mechanism
-
-### Data Structures ✓
-- [x] `effect_animation_info` (28 bytes): All fields documented including directional logic
-- [x] `move_animation_info` (24 bytes): All fields, per-Pokemon overrides
-- [x] `animation_control`: Bitfield meanings (bits 12=loop, 13=complete, 15=active)
-- [x] `effect_context` (316 bytes): Key offsets for trajectory, animation state
+**Files Modified (Client):**
+- `client/autoloads/move_resolver.gd`
+- `client/game/battle/combat/animation_sequencer.gd`
+- `client/game/battle/combat/move_effect_player.gd`
+- `client/game/battle/common/pokemon_entity.gd`
 
 ---
 
