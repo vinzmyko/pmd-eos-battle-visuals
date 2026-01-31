@@ -2,27 +2,39 @@
 
 ## Next Steps - Effect Lifecycle Investigation
 
-### Priority 1: Looping Effect Termination (Ghidra)
+### Priority 1: Looping Effect Termination (Ghidra) ✓ DOCUMENTED
 
 **Problem:** Our client uses arbitrary 3-loop / 100-frame timeout for looping effects. ROM has explicit termination.
 
-**What we know:**
-- Looping effects (anim_type 3-5 with `loop_flag=1`) never auto-terminate
-- They require explicit `FUN_022bde50(instance_id)` call
-- Tick function `FUN_022bf4f0` skips cleanup when loop flag is set
+**Documented findings (see `effect_termination.md`):**
+- Non-looping effects auto-terminate via tick when animation completes
+- Looping effects (anim_type 3-5 with `loop_flag=1`) run until flag cleared
+- `FUN_022bde50` is explicit stop function
+- Projectiles self-terminate after motion completes
+- Status effects: `EndReflectClassStatus` clears logical flag only, visual effect terminated via loop flag mechanism
 
-**Investigation needed:**
-1. Find all XREFs to `FUN_022bde50` (0x022bde50) - which callers are NOT user-triggered?
-2. In `ExecuteMoveEffect` - after damage application, is there effect cleanup code?
-3. Look for patterns: `if (effect_handle >= 0) { FUN_022bde50(effect_handle); }`
+**Implementation approach:**
+- Track looping effects per entity
+- Stop effects when status ends or entity despawns
+- Projectiles call explicit stop after motion
 
-**Hypothesis:** Looping effects are stopped when:
-- Move execution completes (damage applied)
-- Entity dies/despawns
-- New action starts on same entity
-- Move is interrupted
+### Priority 2: Shadow Sprite Extraction (NEW)
 
-### Priority 2: Layer Spawn Timing
+**Goal:** Extract shadow sprites from ROM instead of providing static assets.
+
+**Location:** `DUNGEON/dungeon.bin`
+- File 995 = `DBIN_RAW_IMAGE_4BPP` (shadow texture, raw 4bpp tiles)
+- File 996 = `SIR0` (unknown, possibly OAM metadata)
+- File 997 = `DPL` (shadow palette, 16 colors)
+
+**Shadow system (from Ghidra):**
+- Shadow size per monster at `monster.md + 0x2E` (within 0x44-byte entries)
+- Land vs water shadows (water uses remapped index via `DAT_02304c30`)
+- OAM attributes at `DAT_02058c0c` (0x10 bytes per size, land+water variants)
+
+**See:** `shadow_extraction_plan.md` for full implementation details
+
+### Priority 3: Layer Spawn Timing
 
 **Question:** Do all 4 effect layers spawn simultaneously or sequentially?
 
@@ -30,20 +42,6 @@
 - Trace call order in `ExecuteMoveEffect` and `PlayMoveAnimation`
 - Look for `AdvanceFrame` calls between layer handler invocations
 - Document the exact timing relationship
-
-### Priority 3: Attachment Point Implementation (Deferred)
-
-**Status:** Data is extracted and available, not yet used in client.
-
-**Current state:**
-- Scraper extracts attachment points per frame (head, lhand, rhand, center)
-- `effect_animation_info.attachment_point` field indicates which point to use
-- ROM looks up attachment points but does NOT apply them to projectile trajectory
-
-**To implement:**
-- Effect spawns at entity position + attachment point offset
-- Need to pass attachment point index through to effect player
-- Get offset from current animation frame's attachment data
 
 ---
 
@@ -68,52 +66,26 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 - Need to understand screen overlay rendering system
 - **Status:** Not implemented, returns placeholder `ScreenEffect`
 
----
-
-## Investigation Notes (Ghidra)
-
-### FUN_022bde50 - Effect Stop Function
-- **Address (NA):** 0x022bde50
-- **Purpose:** Explicitly stops an effect by instance_id
-- **Called by:** Need to find all XREFs
-
-### Key Questions to Answer
-1. What triggers looping effect cleanup in normal move execution?
-2. Is `delay_counter` (context + 0x18) ever set to non-zero? Where?
-3. Are there entity cleanup routines that iterate active effects?
-
-### Addresses to Investigate
-| Function | Address | Purpose |
-|----------|---------|---------|
-| `FUN_022bde50` | 0x022bde50 | Stop effect by instance_id |
-| `FUN_022bf4f0` | 0x022bf4f0 | Per-effect tick |
-| `FUN_022bdfc0` | 0x022bdfc0 | Effect initialization |
-| `ExecuteMoveEffect` | ? | Main move execution |
-
----
-
-## WAN Format Gaps
-
-### Effect WAN vs Character WAN
-- [ ] Effect WAN metaframe format (10-byte structure, different from CHARA)
-- [ ] Palette offset handling (`Unk#5` field in PaletteInfo)
-- [ ] 8bpp vs 4bpp image data organization
-- [ ] Sequence organization in effect files
-
-### From SkyTemple/Project Pokemon Docs
-```
-Effect Metaframe Structure (10 bytes):
-- Section 0-2: Flags (FFFF, 00, draw-behind)
-- Section 3-4: Y offset + dimensions
-- Section 5-6: X offset + dimensions (size, flip, is_last)
-- Section 7: Image offset by blocks
-- Section 8: Palette index (0-C external, D-E custom)
-- Section 9: Always 0xC
-```
+### Attachment Point Implementation
+- Data is extracted and available, not yet used in client
+- `effect_animation_info.attachment_point` field indicates which point to use
+- ROM looks up attachment points but does NOT apply them to projectile trajectory
+- **Status:** Deferred, low priority
 
 ---
 
 ## Completed Research ✓
+
+### Effect Termination ✓ (COMPLETED)
+
+**See:** `effect_termination.md`
+
+**Key findings:**
+- Two termination mechanisms: explicit (`FUN_022bde50`) and auto-terminate via tick
+- Tick checks `loop_flag` at context offset `0x3C bit 0`
+- Projectiles self-terminate after motion loop
+- Status effects clear loop flag, tick auto-terminates
+- Global cleanup via `FUN_022bdbc8` (iterates all 32 slots)
 
 ### Directional Effects ✓ (COMPLETED)
 
@@ -144,13 +116,48 @@ Effect Metaframe Structure (10 bytes):
 - `client/game/battle/combat/move_effect_player.gd`
 - `client/game/battle/common/pokemon_entity.gd`
 
+### Entity Positioning ✓
+- [x] Tile-to-pixel formulas: Items (+4,+4), Monsters (+12,+16)
+- [x] 8.8 fixed point format
+- [x] Attachment point system (4 points per frame: head, lhand, rhand, center)
+- [x] Special value (99,99) = use sprite center
+
+### Projectile Motion ✓
+- [x] Speed mapping: raw values 1→2, 2→3, other→6
+- [x] Frame counts: 24/speed (12, 8, or 4 frames)
+- [x] Direction table (DIRECTIONS_XY) with 8 directions
+- [x] Wave patterns: 0=straight, 1=vertical sine, 2=spiral
+- [x] Source position = attacker pixel_pos, dest = target tile center
+- [x] **Finding:** Attachment points looked up but NOT applied to trajectory
+
+### Move Effect Pipeline ✓
+- [x] 4 effect layers: 0=charge, 1=secondary, 2=primary, 3=projectile
+- [x] Flag bit 3 = dual-target (both attacker and target)
+- [x] Special monster animation types 98/99:
+  - Type 99: Spin through 8 directions, 2 frames each (16 total)
+  - Type 98: Multi-direction, 9 iterations +2 direction each (18 total)
+  - Both spawn effect ONCE at start, bypass hit-frame system
+
+### Effect Lifecycle ✓
+- [x] Pool of 32 effects, 316 bytes each
+- [x] Main loop: `FUN_022bf764` ticks all slots via `FUN_022bf4f0`
+- [x] Auto-termination: Non-looping effects cleanup when animation complete
+- [x] Looping effects (anim_type 3-5 with loop flag): Require loop_flag clear or explicit stop
+- [x] 100-frame timeout is safety fallback, not intended mechanism
+
+### Data Structures ✓
+- [x] `effect_animation_info` (28 bytes): All fields documented including directional logic
+- [x] `move_animation_info` (24 bytes): All fields, per-Pokemon overrides
+- [x] `animation_control`: Bitfield meanings (bits 12=loop, 13=complete, 15=active)
+- [x] `effect_context` (316 bytes): Key offsets for trajectory, animation state
+
 ---
 
 ## Reference
 
 ### Key File Paths (Rust Scraper)
-- `src/effect_sprite_extractor.rs` - Main extraction pipeline (UPDATED)
-- `src/move_effects_index.rs` - JSON schema definitions (UPDATED)
+- `src/effect_sprite_extractor.rs` - Main extraction pipeline
+- `src/move_effects_index.rs` - JSON schema definitions
 - `src/graphics/wan/parser.rs` - WAN parsing (has `max_sequences_per_group`)
 - `src/graphics/wan/renderer.rs` - Sprite sheet rendering
 
@@ -170,3 +177,14 @@ Effect Metaframe Structure (10 bytes):
 | 4 | Wat | WAT format - not implemented |
 | 5 | Screen | Screen effect (file_index + 0x10C) - placeholder |
 | 6 | Wba | WBA format - not implemented |
+
+### Shadow System Reference
+| Component | Location | Notes |
+|-----------|----------|-------|
+| Shadow texture | dungeon.bin[995] | Raw 4bpp tiles |
+| Shadow metadata | dungeon.bin[996] | SIR0 wrapped, unknown structure |
+| Shadow palette | dungeon.bin[997] | DPL format, 16 colors |
+| Shadow size/monster | monster.md + 0x2E | Byte value per monster |
+| OAM attributes | DAT_02058c0c | 0x10 bytes per size |
+| X offsets | DAT_02058c10 | 4 bytes per size |
+| Water remap | DAT_02304c30 | land_size → water_size |
