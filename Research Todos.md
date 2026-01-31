@@ -18,7 +18,29 @@
 - Stop effects when status ends or entity despawns
 - Projectiles call explicit stop after motion
 
-### Priority 2: Shadow Sprite Extraction (NEW)
+### Priority 2: Pokemon Sprite Centering ✓ RESEARCH COMPLETE
+
+**Problem:** Pokemon sprites don't align correctly with tile positions. The scraper centers cropped content in atlas cells, but ROM offset values are relative to entity's logical position (feet/ground point). This coordinate system mismatch causes positioning errors.
+
+**Research Findings (Verified via Ghidra):**
+- ROM formula: `Draw_Position = Entity_Position + SequenceFrame_Offset`
+- Entity position = feet/ground point (NOT visual center)
+- Shadow position = `Entity_Position + shadow_offset - 4` (hardcoded -4 Y adjustment)
+- SequenceFrame offsets are small additive values (±1-2 pixels typically)
+
+**Solution:** Anchor-based positioning
+- Track where entity origin (0,0) is in each frame
+- Position frames so origin is at consistent anchor pixel in all cells
+- Output anchor point in JSON for client to use
+- Dynamic cell sizing to accommodate all frame extents
+
+**Implementation Status:** Ready for implementation
+
+**See:** 
+- `positioning_system.md` for ROM coordinate system research
+- `sprite_centering_plan.md` for implementation plan
+
+### Priority 3: Shadow Sprite Extraction
 
 **Goal:** Extract shadow sprites from ROM instead of providing static assets.
 
@@ -34,7 +56,7 @@
 
 **See:** `shadow_extraction_plan.md` for full implementation details
 
-### Priority 3: Layer Spawn Timing
+### Priority 4: Layer Spawn Timing
 
 **Question:** Do all 4 effect layers spawn simultaneously or sequentially?
 
@@ -160,6 +182,9 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 - `src/move_effects_index.rs` - JSON schema definitions
 - `src/graphics/wan/parser.rs` - WAN parsing (has `max_sequences_per_group`)
 - `src/graphics/wan/renderer.rs` - Sprite sheet rendering
+- `src/graphics/atlas/analyser.rs` - Frame analysis and reference point calculation
+- `src/graphics/atlas/generator.rs` - Atlas layout and frame positioning
+- `src/graphics/atlas/metadata.rs` - JSON metadata generation
 
 ### Key File Paths (Godot Client)
 - `client/game/battle/combat/animation_sequencer.gd` - Coordinates attack animations
@@ -188,3 +213,11 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 | OAM attributes | DAT_02058c0c | 0x10 bytes per size |
 | X offsets | DAT_02058c10 | 4 bytes per size |
 | Water remap | DAT_02304c30 | land_size → water_size |
+
+### Research Documentation Files
+| File | Description |
+|------|-------------|
+| `effect_termination.md` | How looping effects are stopped in ROM |
+| `shadow_extraction_plan.md` | Plan for extracting shadow sprites from dungeon.bin |
+| `sprite_centering_plan.md` | Plan for fixing Pokemon sprite positioning/centering |
+| `positioning_system.md` | ROM sprite coordinate system research (verified functions) |
