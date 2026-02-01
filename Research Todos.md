@@ -6,7 +6,7 @@
 
 **Problem:** Our client uses arbitrary 3-loop / 100-frame timeout for looping effects. ROM has explicit termination.
 
-**Documented findings (see `effect_termination.md`):**
+**Documented findings (see `Systems/effect_lifecycle.md`):**
 - Non-looping effects auto-terminate via tick when animation completes
 - Looping effects (anim_type 3-5 with `loop_flag=1`) run until flag cleared
 - `FUN_022bde50` is explicit stop function
@@ -34,15 +34,17 @@
 - Output anchor point in JSON for client to use
 - Dynamic cell sizing to accommodate all frame extents
 
-**Implementation Status:** Ready for implementation
+**Status:** Implementation complete. Pending visual verification after:
+- [ ] Shadow sprite extraction
+- [ ] Dungeon tileset extraction
 
-**See:** 
-- `positioning_system.md` for ROM coordinate system research
-- `sprite_centering_plan.md` for implementation plan
+**See:** `Systems/positioning_system.md` for ROM coordinate system research
 
 ### Priority 3: Applying Pokemon Centering Logic to ROM scraper and game client
 
-- Look at `sprite_centering_plan.md`
+- Verify visual output matches ROM after shadow and tileset extraction
+- Test with various Pokemon sizes (Pichu, Snorlax, Wailord)
+- Confirm shadow alignment works with anchor system
 
 ### Priority 4: Dungeon tileset extraction via python
 
@@ -108,7 +110,7 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 
 ### Effect Termination ✓ (COMPLETED)
 
-**See:** `effect_termination.md`
+**See:** `Systems/effect_lifecycle.md`
 
 **Key findings:**
 - Two termination mechanisms: explicit (`FUN_022bde50`) and auto-terminate via tick
@@ -181,6 +183,13 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 - [x] `animation_control`: Bitfield meanings (bits 12=loop, 13=complete, 15=active)
 - [x] `effect_context` (316 bytes): Key offsets for trajectory, animation state
 
+### Sprite Positioning System ✓
+- [x] Core formula: `Draw = Entity + SequenceFrame_Offset`
+- [x] Entity position = feet/ground point
+- [x] Shadow Y adjustment: hardcoded -4
+- [x] SequenceFrame offsets are small animation deltas (±1-2 pixels)
+- [x] Meta-frame renderer combines base position with offsets
+
 ---
 
 ## Reference
@@ -225,7 +234,7 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 ### Research Documentation Files
 | File | Description |
 |------|-------------|
-| `effect_termination.md` | How looping effects are stopped in ROM |
+| `Systems/effect_lifecycle.md` | How looping effects are stopped in ROM |
+| `Systems/positioning_system.md` | ROM sprite coordinate system (verified functions) |
 | `shadow_extraction_plan.md` | Plan for extracting shadow sprites from dungeon.bin |
-| `sprite_centering_plan.md` | Plan for fixing Pokemon sprite positioning/centering |
-| `positioning_system.md` | ROM sprite coordinate system research (verified functions) |
+| `dungeon_tileset_spec.md` | Dungeon tileset extraction specification |
