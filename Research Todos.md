@@ -40,7 +40,15 @@
 - `positioning_system.md` for ROM coordinate system research
 - `sprite_centering_plan.md` for implementation plan
 
-### Priority 3: Shadow Sprite Extraction
+### Priority 3: Applying Pokemon Centering Logic to ROM scraper and game client
+
+- Look at `sprite_centering_plan.md`
+
+### Priority 4: Dungeon tileset extraction via python
+
+- Look at `dungeon_tileset_spec.md`
+
+### Priority 5: Shadow Sprite Extraction
 
 **Goal:** Extract shadow sprites from ROM instead of providing static assets.
 
@@ -56,7 +64,7 @@
 
 **See:** `shadow_extraction_plan.md` for full implementation details
 
-### Priority 4: Layer Spawn Timing
+### Priority 6: Layer Spawn Timing
 
 **Question:** Do all 4 effect layers spawn simultaneously or sequentially?
 
