@@ -18,7 +18,7 @@
 - Stop effects when status ends or entity despawns
 - Projectiles call explicit stop after motion
 
-### Priority 2: Pokemon Sprite Centering ✓ RESEARCH COMPLETE
+### Priority 2: Pokemon Sprite Centering ✓ DOCUMENTED
 
 **Problem:** Pokemon sprites don't align correctly with tile positions. The scraper centers cropped content in atlas cells, but ROM offset values are relative to entity's logical position (feet/ground point). This coordinate system mismatch causes positioning errors.
 
@@ -40,17 +40,17 @@
 
 **See:** `Systems/positioning_system.md` for ROM coordinate system research
 
-### Priority 3: Applying Pokemon Centering Logic to ROM scraper and game client
+### Priority 3: Applying Pokemon Centering Logic to ROM scraper and game client ✓ APPLIED IN GAME CLIENT, NEED TO CHECK IF IT LOOKS GOOD WHEN DUNGEON TILES DONE
 
 - Verify visual output matches ROM after shadow and tileset extraction
 - Test with various Pokemon sizes (Pichu, Snorlax, Wailord)
 - Confirm shadow alignment works with anchor system
 
-### Priority 4: Dungeon tileset extraction via python
+### Priority 4: Dungeon tileset extraction via python ✓ Created python implementation
 
 - Look at `dungeon_tileset_spec.md`
 
-### Priority 5: Shadow Sprite Extraction
+### Priority 5: Shadow Sprite Extraction ✓ Researching construction and palettes
 
 **Goal:** Extract shadow sprites from ROM instead of providing static assets.
 
