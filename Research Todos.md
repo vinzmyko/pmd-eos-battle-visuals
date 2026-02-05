@@ -103,6 +103,9 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 - `effect_animation_info.attachment_point` field indicates which point to use
 - ROM looks up attachment points but does NOT apply them to projectile trajectory
 - **Status:** Deferred, low priority
+- **NOTE**: 
+    - Might need to understand how the sprites get properly translated into the sprites and then check to see if how my game client and rom scraper work similar to the rom.
+    - Figure out the end points of when the project animation gets played as well.
 
 ---
 
