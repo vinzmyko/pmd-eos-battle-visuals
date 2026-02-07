@@ -1,4 +1,4 @@
-# Dungeon Tileset Extraction Specification v1.0
+# Dungeon Tileset Extraction Specification v2.0
 
 ## 1. Overview
 
@@ -9,82 +9,301 @@ This specification defines the export format for dungeon tilesets from Pokemon M
 - **Easy to use** with standard image formats and JSON
 - **Complete** with autotile rules for procedural dungeon generation
 
+**Status:** Python implementation complete. This document is the canonical reference, superseding earlier research notes.
+
 ---
 
-## 2. Output Structure
+## 2. File Locations in ROM
 
-### 2.1 Directory Layout
+| File Path | Description |
+|-----------|-------------|
+| `DUNGEON/dungeon.bin` | Container for all dungeon tileset data |
+| `BALANCE/mappa_s.bin` | Floor layouts, maps dungeons to tilesets |
+| `ARM9` binary | Contains hardcoded dungeon list |
+
+### 2.1 SkyTemple Access Pattern
+
+```python
+from skytemple_files.common.types.file_types import FileType
+
+dungeon_bin = FileType.DUNGEON_BIN.deserialize(
+    rom.getFileByName("DUNGEON/dungeon.bin"), config
+)
+
+# Access per-tileset files
+dma  = dungeon_bin.get(f"dungeon{tileset_id}.dma")
+dpc  = dungeon_bin.get(f"dungeon{tileset_id}.dpc")
+dpci = dungeon_bin.get(f"dungeon{tileset_id}.dpci")
+dpl  = dungeon_bin.get(f"dungeon{tileset_id}.dpl")
+dpla = dungeon_bin.get(f"dungeon{tileset_id}.dpla")
+```
+
+---
+
+## 3. Graphics Data Classes
+
+### 3.1 DMA (Dungeon Map Assembly)
+
+Maps neighbor configurations to chunk IDs. This is the autotile logic.
+
+```python
+from skytemple_files.graphics.dma.protocol import DmaType
+
+DmaType.WALL  = 0    # Wall terrain
+DmaType.WATER = 1    # Water/lava (secondary terrain)
+DmaType.FLOOR = 2    # Floor terrain
+
+# Get chunk IDs for a terrain type + neighbor configuration
+chunks = dma.get(DmaType.WALL, neighbor_bits)  # Returns list of 3 variations
+chunk_id = chunks[0]  # Use first variation
+```
+
+### 3.2 DPC (Dungeon Palette Chunks)
+
+Contains the actual chunk graphics (24×24 pixel tiles).
+
+```python
+# Render all chunks as a single image (20 columns wide)
+base_chunks = dpc.chunks_to_pil(dpci, dpl.palettes, width_in_mtiles=20)
+```
+
+**Important:** Returns a `PIL.Image` in mode `'P'` (indexed/paletted), not RGBA. This preserves palette indices for shader-based animation.
+
+### 3.3 DPCI (Dungeon Palette Chunk Index)
+
+Index data for DPC. Always passed alongside DPC.
+
+### 3.4 DPL (Dungeon Palette List)
+
+Contains the base palettes (12 palettes × 16 colors each).
+
+```python
+num_palettes = len(dpl.palettes)  # Usually 12
+palette_10 = dpl.palettes[10]     # List of RGB values [R,G,B,R,G,B,...]
+# Each palette has 16 colors = 48 bytes
+r, g, b = palette[0], palette[1], palette[2]  # First color
+```
+
+### 3.5 DPLA (Dungeon Palette List Animation)
+
+Contains palette animation data. See §6 for full details.
+
+```python
+dpla.colors                        # List of 32 slots (16 for pal10, 16 for pal11)
+dpla.durations_per_frame_for_colors  # List of 32 durations
+
+# Get animated palette for a specific frame
+palette = dpla.get_palette_for_frame(0, frame_index)  # Palette 10
+palette = dpla.get_palette_for_frame(1, frame_index)  # Palette 11
+```
+
+---
+
+## 4. Dungeon Metadata
+
+### 4.1 Dungeon List (ARM9)
+
+```python
+from skytemple_files.hardcoded.dungeons import HardcodedDungeons
+
+dungeons = HardcodedDungeons.get_dungeon_list(
+    get_binary_from_rom(rom, config.bin_sections.arm9), config
+)
+
+# Each dungeon has:
+dungeon.mappa_index   # Index into mappa floor lists
+dungeon.start_after   # Starting floor offset
+dungeon.number_floors # Number of floors
+```
+
+### 4.2 MAPPA (Floor Layouts)
+
+```python
+mappa = FileType.MAPPA_BIN.deserialize(rom.getFileByName("BALANCE/mappa_s.bin"))
+
+# Get tileset ID for a dungeon's first floor
+floor = mappa.floor_lists[dungeon.mappa_index][dungeon.start_after]
+tileset_id = floor.layout.tileset_id
+```
+
+---
+
+## 5. Neighbor Bit System
+
+### 5.1 Bit Layout
+
+The DMA uses an 8-bit value where each bit represents a neighbor:
+
+```
+    NW(32)  N(16)  NE(8)
+    W(64)    X     E(4)
+    SW(128) S(1)   SE(2)
+
+Binary: SW W NW N NE E SE S
+        7  6  5 4  3 2  1 0
+```
+
+Examples:
+- `0b11111111` (255) = All 8 neighbors = fully surrounded
+- `0b00000000` (0) = No neighbors = isolated tile
+- `0b00010001` (17) = N + S = vertical corridor
+
+### 5.2 The 47-Tile Blob Pattern
+
+The game uses 256 possible neighbor configurations but only ~47 visually distinct tiles. This is because **diagonals only matter when both adjacent cardinals are present**.
+
+Example — these all look the same (single south connection):
+- `0b00000001` (S only)
+- `0b00000011` (S + SE)
+- `0b10000001` (S + SW)
+- `0b10000011` (S + SE + SW)
+
+---
+
+## 6. Palette Animation System
+
+### 6.1 Per-Color Animation
+
+Unlike typical palette cycling, PMD uses **per-color animation** where:
+- Each of the 16 colors in palette 10 has its own animation sequence
+- Each color has its own duration (speed)
+- This creates complex effects like shimmering water + moving highlights
+
+### 6.2 Data Structure
+
+```
+DPLA.colors[0-15]   → Animation frames for palette 10, colors 0-15
+DPLA.colors[16-31]  → Animation frames for palette 11, colors 0-15 (rarely used)
+
+Each color slot contains: [R,G,B, R,G,B, R,G,B, ...]
+                          frame0  frame1  frame2  ...
+```
+
+### 6.3 Duration System
+
+```python
+dpla.durations_per_frame_for_colors[0]   # Duration for color 0 (in 60fps frames)
+# Convert to milliseconds
+duration_ms = round(1000 / 60 * duration_frames)
+# Example: duration=4 → 67ms, duration=18 → 300ms
+```
+
+### 6.4 Animation Effects
+
+The combination of different speeds creates:
+1. **Slow shimmer** (colors 1-4, duration=18): Gradual RGB shifts in water body
+2. **Fast highlights** (colors 13-15, duration=4): Bright spots that appear to move
+
+### 6.5 Which Palettes Animate
+
+| Palette Index | Pixel Index Range | Used For | Actually Animates |
+|---------------|-------------------|----------|-------------------|
+| 10 | 160-175 | Water/Lava | Yes (always check) |
+| 11 | 176-191 | Secondary | Rarely (often empty) |
+
+### 6.6 Static vs Animated Detection
+
+Having DPLA data doesn't mean animation exists. Must check if colors actually change:
+
+```python
+def check_animation(dpla):
+    if not dpla.colors[0]:
+        return False
+    for color_idx in range(16):
+        color_data = dpla.colors[color_idx]
+        if color_data and len(color_data) >= 6:
+            if color_data[0:3] != color_data[3:6]:
+                return True
+    return False
+```
+
+---
+
+## 7. Output Structure
+
+### 7.1 Directory Layout
 
 ```
 dungeon_tilesets/
-├── index.json                    # Master index of all tilesets
-├── tileset_000/
-│   ├── chunks.png                # Spritesheet with all chunks and animation frames
-│   └── tileset.json              # Autotile rules, animation data, metadata
-├── tileset_001/
-│   ├── chunks.png
-│   └── tileset.json
-└── ... (up to 169 valid tilesets)
+├── layout.json              # Universal tile positions
+├── index.json               # Tileset metadata + animation info
+├── 001_beach_cave.png       # Indexed PNG (576×144)
+├── 001_beach_cave.pal.png   # Palette texture (16×N) - only if animated
+├── ...
+└── shader/
+    ├── palette_animation.gdshader
+    └── usage_example.gd
 ```
 
-### 2.2 File Naming
+### 7.2 Chunk Layout
 
-- Tilesets use zero-padded 3-digit IDs: `tileset_000`, `tileset_001`, etc.
-- Only valid, visually distinct tilesets are exported
-- Placeholder or duplicate tilesets (e.g., tileset 170) are skipped
-
----
-
-## 3. chunks.png Specification
-
-### 3.1 Image Format
-
-- **Format:** PNG (RGBA, 32-bit)
-- **Color:** Fully baked RGB colors (not indexed)
-
-### 3.2 Layout
-
-The spritesheet contains all 400 chunks arranged in a 20×20 grid. Animation frames are stacked vertically.
-
-```
-┌─────────────────────────────────────┐
-│  Frame 0: Chunks 0-399 (20×20 grid) │  480 × 480 px
-├─────────────────────────────────────┤
-│  Frame 1: Chunks 0-399 (20×20 grid) │  480 × 480 px
-├─────────────────────────────────────┤
-│  ...                                │
-├─────────────────────────────────────┤
-│  Frame N: Chunks 0-399 (20×20 grid) │  480 × 480 px
-└─────────────────────────────────────┘
-
-Total dimensions: 480 × (480 × frame_count) pixels
-```
-
-### 3.3 Chunk Addressing
-
-To locate chunk `C` at animation frame `F`:
+Chunks are stored in a 20-column grid within DPC data:
 
 ```python
-CHUNK_SIZE = 24
-GRID_WIDTH = 20
-FRAME_HEIGHT = 480
-
-x = (C % GRID_WIDTH) * CHUNK_SIZE
-y = (F * FRAME_HEIGHT) + (C // GRID_WIDTH) * CHUNK_SIZE
+chunk_id = 45
+col = chunk_id % 20   # = 5
+row = chunk_id // 20  # = 2
+x = col * 24  # Pixel position
+y = row * 24
 ```
 
-### 3.4 Animation Notes
+Organized output layout (8×6 grid per terrain, 47 tiles + 1 empty):
 
-- Frame 0 is always the base frame
-- If no palette animation exists, only 1 frame is exported
-- Typical animated tilesets have 8-16 frames
-- All chunks are present in all frames (even non-animated ones)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  WALL (8×6)        │  SECONDARY (8×6)   │  FLOOR (8×6)         │
+│  192×144 px        │  192×144 px        │  192×144 px          │
+└─────────────────────────────────────────────────────────────────┘
+Total: 576×144 pixels
+```
+
+### 7.3 Palette Texture Layout
+
+For shader-based animation:
+
+```
+Row 0-11:  Base palettes (static lookup)
+Row 12+:   Palette 10 animation frames
+Width: 16 pixels (one per color)
+Height: num_base_palettes + num_animation_frames
+```
 
 ---
 
-## 4. tileset.json Specification
+## 8. index.json Specification
 
-### 4.1 Complete Schema
+### 8.1 Schema
+
+```json
+{
+  "format_version": "1.0",
+  "generator": "pmd-eos-tileset-extractor",
+  "game": "Pokemon Mystery Dungeon: Explorers of Sky",
+  "extraction_date": "2025-01-31",
+  
+  "tilesets": [
+    {
+      "id": 0,
+      "path": "tileset_000/",
+      "dungeons": ["Beach Cave", "Beach Cave Pit"],
+      "animated": true,
+      "frame_count": 12
+    }
+  ],
+  
+  "statistics": {
+    "total_tilesets": 170,
+    "exported_tilesets": 144,
+    "skipped_tilesets": [170]
+  }
+}
+```
+
+---
+
+## 9. tileset.json Specification
+
+### 9.1 Complete Schema
 
 ```json
 {
@@ -140,147 +359,32 @@ y = (F * FRAME_HEIGHT) + (C // GRID_WIDTH) * CHUNK_SIZE
 }
 ```
 
-### 4.2 Field Descriptions
-
-#### `tileset` Object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | integer | Original tileset index (0-169) |
-| `name` | string | Identifier string `"dungeon_XXX"` |
-| `dungeons` | string[] | Human-readable dungeon names that use this tileset |
-
-#### `spritesheet` Object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `file` | string | Filename of the PNG spritesheet |
-| `chunk_size` | integer | Pixels per chunk side (always 24) |
-| `tile_size` | integer | Pixels per tile side (always 8) |
-| `tiles_per_chunk` | integer | Tiles per chunk side (always 3) |
-| `grid_width` | integer | Chunks per row (always 20) |
-| `grid_height` | integer | Chunks per column (always 20) |
-| `total_chunks` | integer | Total chunks (always 400) |
-| `frame_count` | integer | Animation frames (1 if not animated) |
-| `frame_duration_ms` | integer | Milliseconds per frame |
-
-#### `terrain_types` Object
-
-Documents the terrain type values for reference:
-- `wall` (0): Solid walls
-- `secondary` (1): Water, lava, or void (depends on tileset appearance)
-- `floor` (2): Walkable floor
-
-#### `neighbor_bits` Object
-
-Documents the 8-direction bitmask values. When building the neighbor bitfield, OR together the bits for each direction where the neighboring tile has the **same terrain type**.
-
-#### `autotile_rules` Object
+### 9.2 Autotile Rules
 
 Each terrain type maps to an array of 256 entries (one per neighbor configuration). Each entry is an array of 3 chunk IDs (visual variations).
 
-```json
-"autotile_rules": {
-  "wall": [
-    [12, 45, 78],    // neighbor_bits = 0 (no same-type neighbors)
-    [23, 56, 89],    // neighbor_bits = 1 (south neighbor is same type)
-    [34, 67, 90],    // neighbor_bits = 2 (south-east neighbor is same type)
-    ...              // ... up to index 255
-  ],
-  "secondary": [...],
-  "floor": [...]
-}
-```
-
-**Usage:** To get chunk options for a wall tile with neighbors to the north and east:
+**Usage:**
 ```python
 neighbor_bits = NORTH | EAST  # = 16 | 4 = 20
 chunk_options = tileset["autotile_rules"]["wall"][20]  # Returns [a, b, c]
-chunk_id = random.choice(chunk_options)  # Pick one variation
+chunk_id = random.choice(chunk_options)
 ```
 
-#### `extra_tiles` Object
+### 9.3 Variation Selection
 
-Additional tile variations not covered by the 8-direction autotiling:
-
-| Key | Description |
-|-----|-------------|
-| `floor_variant` | Alternative floor appearance |
-| `void` | Chasm/void tiles (first entry is typically the true void) |
-| `floor_variant_2` | Additional floor variation |
-
-Each is an array of chunk IDs.
+The 3 variations per configuration exist for visual variety. Game engines should:
+- **At map generation:** Pick randomly and store the choice
+- **At runtime:** Use the stored choice (don't re-randomize each frame)
 
 ---
 
-## 5. index.json Specification
+## 10. Implementation Guide
 
-### 5.1 Schema
-
-```json
-{
-  "format_version": "1.0",
-  "generator": "pmd-eos-tileset-extractor",
-  "game": "Pokemon Mystery Dungeon: Explorers of Sky",
-  "extraction_date": "2025-01-31",
-  
-  "tilesets": [
-    {
-      "id": 0,
-      "path": "tileset_000/",
-      "dungeons": ["Beach Cave", "Beach Cave Pit"],
-      "animated": true,
-      "frame_count": 12
-    },
-    {
-      "id": 1,
-      "path": "tileset_001/",
-      "dungeons": ["Drenched Bluff"],
-      "animated": true,
-      "frame_count": 8
-    }
-  ],
-  
-  "statistics": {
-    "total_tilesets": 170,
-    "exported_tilesets": 165,
-    "skipped_tilesets": [170]
-  }
-}
-```
-
-### 5.2 Field Descriptions
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tilesets` | array | List of all exported tilesets |
-| `tilesets[].id` | integer | Original tileset index |
-| `tilesets[].path` | string | Relative path to tileset directory |
-| `tilesets[].dungeons` | string[] | Dungeon names using this tileset |
-| `tilesets[].animated` | boolean | Whether tileset has palette animation |
-| `tilesets[].frame_count` | integer | Number of animation frames |
-| `statistics` | object | Summary information |
-| `statistics.skipped_tilesets` | integer[] | IDs of invalid/skipped tilesets |
-
----
-
-## 6. Implementation Guide
-
-### 6.1 Autotile Algorithm
-
-When placing a tile in a procedural dungeon:
+### 10.1 Autotile Algorithm
 
 ```python
 def get_chunk_for_tile(tileset_json, terrain_type, x, y, dungeon_map):
-    """
-    terrain_type: "wall", "secondary", or "floor"
-    dungeon_map: 2D array where each cell is a terrain type string
-    """
-    
-    # 1. Get the terrain at this position
     current_terrain = dungeon_map[y][x]
-    
-    # 2. Check all 8 neighbors, build bitmask
     neighbor_bits = 0
     
     directions = [
@@ -300,23 +404,17 @@ def get_chunk_for_tile(tileset_json, terrain_type, x, y, dungeon_map):
             if dungeon_map[ny][nx] == current_terrain:
                 neighbor_bits |= bit
         else:
-            # Treat out-of-bounds as same type (wall-like behavior)
-            neighbor_bits |= bit
+            neighbor_bits |= bit  # Out-of-bounds = same type
     
-    # 3. Look up chunk options
     rules = tileset_json["autotile_rules"][terrain_type]
     chunk_options = rules[neighbor_bits]
-    
-    # 4. Pick one variation (randomly for visual variety)
     return random.choice(chunk_options)
 ```
 
-### 6.2 Rendering a Chunk
+### 10.2 Rendering a Chunk
 
 ```python
 def get_chunk_rect(chunk_id, frame, tileset_json):
-    """Returns (x, y, width, height) for the chunk in the spritesheet."""
-    
     ss = tileset_json["spritesheet"]
     chunk_size = ss["chunk_size"]
     grid_width = ss["grid_width"]
@@ -324,280 +422,112 @@ def get_chunk_rect(chunk_id, frame, tileset_json):
     
     x = (chunk_id % grid_width) * chunk_size
     y = (frame * frame_height) + (chunk_id // grid_width) * chunk_size
-    
     return (x, y, chunk_size, chunk_size)
 ```
 
-### 6.3 Godot 4.x Integration Outline
+### 10.3 Godot 4.x Integration Outline
 
 ```gdscript
-# Load tileset data
-var tileset_json = JSON.parse_string(FileAccess.open("res://tilesets/tileset_000/tileset.json").get_as_text())
+var tileset_json = JSON.parse_string(
+    FileAccess.open("res://tilesets/tileset_000/tileset.json").get_as_text()
+)
 var chunks_texture = load("res://tilesets/tileset_000/chunks.png")
 
-# Create TileSet
 var tileset = TileSet.new()
 tileset.tile_size = Vector2i(24, 24)
 
-# Add atlas source
 var source = TileSetAtlasSource.new()
 source.texture = chunks_texture
 source.texture_region_size = Vector2i(24, 24)
-
-# For animated tiles, set up animation columns
-# ... (Godot-specific animation setup)
-
-# Create terrain sets for autotiling
-# ... (Map autotile_rules to Godot's terrain system)
 ```
 
 ---
 
-## 7. Edge Cases and Notes
+## 11. Edge Cases
 
-### 7.1 Tileset 170 Redirect
+### 11.1 Tileset ID Remapping
 
-Tileset 170 is invalid and redirects to tileset 1 in the game. It is not exported.
+```python
+if tileset_id == 170:
+    tileset_id = 1  # Maps to Beach Cave
+```
 
-### 7.2 Unused Chunks
+Tileset 170 is invalid and not exported.
+
+### 11.2 Debug Tilesets
+
+Tilesets 144-169 are debug/test tiles — skip these in export.
+
+### 11.3 Out-of-Bounds Neighbors
+
+When checking neighbors at map edges, treat out-of-bounds as same type (wall-like edge behavior). This matches the game's `treat_outside_as_wall` parameter.
+
+### 11.4 Secondary Terrain Appearance
+
+The `secondary` terrain type (internally "water") visually represents water, lava, or void depending on the tileset's graphics.
+
+### 11.5 Unused Chunks
 
 Some of the 400 chunks may be unused/blank. They are still exported for index consistency.
 
-### 7.3 Variation Selection
+---
 
-The 3 variations per configuration exist for visual variety. Game engines should:
-- **At map generation:** Pick randomly and store the choice
-- **At runtime:** Use the stored choice (don't re-randomize each frame)
+## 12. Rust Implementation Notes
 
-### 7.4 Out-of-Bounds Neighbors
+### 12.1 Recommended Crates
+- `image` — PNG reading/writing with indexed mode support
+- `serde` / `serde_json` — JSON serialization
+- NDS ROM reading — need to implement or port from ndspy
 
-When checking neighbors at map edges, treat out-of-bounds as:
-- **Same as current tile** for wall-like edge behavior (recommended)
-- **Or floor** for open-edge behavior
+### 12.2 Key Differences from Python
+1. PIL's indexed image mode → Use `image::GrayImage` or custom indexed format
+2. SkyTemple's file handlers → Port the binary parsing logic
+3. Palette handling → Preserve indices, don't convert to RGBA prematurely
 
-This matches the game's `treat_outside_as_wall` parameter.
-
-### 7.5 Secondary Terrain Appearance
-
-The `secondary` terrain type (internally "water") visually represents:
-- **Water** - Blue, animated waves (most tilesets)
-- **Lava** - Red/orange, animated flow (volcano tilesets)
-- **Void/Chasm** - Dark, possibly animated (some tilesets)
-
-The actual appearance is determined by the tileset's graphics, not by separate logic.
+### 12.3 SkyTemple Source Reference
+- `skytemple_files/graphics/dma/_model.py` — DMA parsing
+- `skytemple_files/graphics/dpc/_model.py` — DPC parsing
+- `skytemple_files/graphics/dpci/_model.py` — DPCI parsing
+- `skytemple_files/graphics/dpl/_model.py` — DPL parsing
+- `skytemple_files/graphics/dpla/_model.py` — DPLA parsing
+- `skytemple_files/dungeon_data/mappa_bin/_model.py` — MAPPA parsing
 
 ---
 
-## 8. Example
+## 13. Execution Plan
 
-### 8.1 Sample tileset.json (Abbreviated)
+### Phase 1: Proof of Concept (Single Tileset) ✅ COMPLETE
 
-```json
-{
-  "format_version": "1.0",
-  "generator": "pmd-eos-tileset-extractor",
-  
-  "tileset": {
-    "id": 0,
-    "name": "dungeon_000",
-    "dungeons": ["Beach Cave", "Beach Cave Pit"]
-  },
-  
-  "spritesheet": {
-    "file": "chunks.png",
-    "chunk_size": 24,
-    "tile_size": 8,
-    "tiles_per_chunk": 3,
-    "grid_width": 20,
-    "grid_height": 20,
-    "total_chunks": 400,
-    "frame_count": 12,
-    "frame_duration_ms": 100
-  },
-  
-  "terrain_types": {
-    "wall": 0,
-    "secondary": 1,
-    "floor": 2
-  },
-  
-  "neighbor_bits": {
-    "south": 1,
-    "south_east": 2,
-    "east": 4,
-    "north_east": 8,
-    "north": 16,
-    "north_west": 32,
-    "west": 64,
-    "south_west": 128
-  },
-  
-  "autotile_rules": {
-    "wall": [
-      [1, 1, 1],
-      [2, 2, 2],
-      [3, 3, 3]
-    ],
-    "secondary": [
-      [100, 100, 100],
-      [101, 101, 101],
-      [102, 102, 102]
-    ],
-    "floor": [
-      [200, 200, 200],
-      [201, 201, 201],
-      [202, 202, 202]
-    ]
-  },
-  
-  "extra_tiles": {
-    "floor_variant": [250, 251, 252],
-    "void": [260, 261, 262],
-    "floor_variant_2": [270, 271, 272]
-  }
-}
-```
+Python implementation verified with SkyTemple libraries. Tileset 0 (Beach Cave) extracted and validated.
 
-*Note: Actual chunk IDs would be the real values from the DMA data. The `...` would expand to all 256 entries per terrain type.*
+### Phase 2: Validation and Refinement ✅ COMPLETE
+
+Format verified, autotile lookup works, animation renders correctly.
+
+### Phase 3: Batch Export ✅ COMPLETE
+
+All valid tilesets (0-143) exported. Debug tilesets (144-169) and invalid tileset 170 skipped.
+
+### Phase 4: Port to Rust Scraper — PENDING
+
+Port proven Python implementation to Rust ROM scraper. Output same JSON format, verify output matches Python version.
+
+### Phase 5: Future Enhancements — NOT IN SCOPE
+
+- DBG background extraction (boss fight rooms)
+- Godot import addon/tool
+- Indexed palette mode for runtime color manipulation
+- Collision data export
+- Unity Rule Tile generator
 
 ---
 
-## 9. Execution Plan
+## 14. Testing Checklist
 
-### Phase 1: Proof of Concept (Single Tileset)
-
-**Goal:** Extract tileset 0 completely and verify the format works.
-
-**Tasks:**
-1. [ ] Create Python script using SkyTemple libraries
-2. [ ] Load ROM and extract tileset 0 data (DMA, DPC, DPCI, DPL, DPLA)
-3. [ ] Render all 400 chunks to a single frame PNG
-4. [ ] Add palette animation frames (bake all frames)
-5. [ ] Export DMA rules to JSON format
-6. [ ] Map tileset 0 to dungeon names (lookup from MAPPA/dungeon data)
-7. [ ] Manually verify output in image viewer
-8. [ ] Test loading in Godot 4.x
-
-**Success Criteria:**
-- chunks.png displays correctly with all 400 chunks
-- Animation frames render water/lava cycling
-- JSON loads and parses without errors
-- Can programmatically look up correct chunk for a given terrain + neighbor config
-
-**Deliverables:**
-```
-output/
-├── tileset_000/
-│   ├── chunks.png
-│   └── tileset.json
-└── extraction_log.txt
-```
-
-**Resources Required:**
-- Pokemon Mystery Dungeon: Explorers of Sky ROM
-- Python 3.8+
-- SkyTemple Files library (`pip install skytemple-files`)
-- ndspy library (`pip install ndspy`)
-- Pillow (`pip install pillow`)
-
-**Reference Code:**
-- `skytemple_files/export_maps.py` - ROM loading pattern
-- `skytemple_files/graphics/dma/dma_drawer.py` - Chunk rendering
-- `skytemple_files/graphics/dpc/_model.py` - `chunks_to_pil()` method
-
----
-
-### Phase 2: Validation and Refinement
-
-**Goal:** Verify the export works in practice and refine the format.
-
-**Tasks:**
-1. [ ] Create simple Godot test scene that loads the tileset
-2. [ ] Implement autotile lookup using exported JSON
-3. [ ] Render a test dungeon layout using the data
-4. [ ] Compare visually against original game / emulator screenshot
-5. [ ] Identify any issues with the format
-6. [ ] Refine JSON structure if needed
-7. [ ] Document any edge cases discovered
-
-**Success Criteria:**
-- Rendered test dungeon looks visually identical to original game
-- Autotile transitions look correct at all neighbor configurations
-- Animation plays at correct speed
-
-**Potential Issues to Watch For:**
-- Chunk ordering mismatch
-- Wrong animation frame timing
-- Missing or incorrect dungeon name mappings
-- Edge cases in neighbor bitfield calculation
-
----
-
-### Phase 3: Batch Export
-
-**Goal:** Export all valid tilesets and create master index.
-
-**Tasks:**
-1. [ ] Modify script to iterate all tilesets (0-169)
-2. [ ] Add validation to skip invalid tilesets (170, any others)
-3. [ ] Implement dungeon name lookups for all tilesets
-4. [ ] Generate `index.json` master file
-5. [ ] Add progress logging and error handling
-6. [ ] Run full extraction
-7. [ ] Spot-check several tilesets across different dungeon types
-
-**Success Criteria:**
-- All valid tilesets exported without errors
-- `index.json` contains complete listing
-- File sizes are reasonable (estimate ~500KB-2MB per tileset with animation)
-- Different dungeon types (cave, forest, volcano, etc.) all look correct
-
-**Estimated Output:**
-- ~165 tilesets × ~1MB average = ~165MB total
-- Plus `index.json` (~50KB)
-
----
-
-### Phase 4: Integration with Existing Scraper (Future)
-
-**Goal:** Port the Python implementation to your Rust ROM scraper.
-
-**Tasks:**
-1. [ ] Analyze Python implementation for porting
-2. [ ] Implement dungeon.bin parsing in Rust
-3. [ ] Implement DMA/DPC/DPCI/DPL/DPLA handlers in Rust
-4. [ ] Implement chunk rendering with palette animation
-5. [ ] Output same JSON format
-6. [ ] Verify output matches Python version
-
-**Notes:**
-- This phase is deferred until Python version is proven
-- May reuse existing parsing code if your scraper already handles some formats
-
----
-
-### Phase 5: Future Enhancements (Not in Scope)
-
-These are documented for future consideration but not part of the current plan:
-
-- [ ] DBG background extraction (boss fight rooms)
-- [ ] Shadow sprite extraction (files 995-997)
-- [ ] Godot import addon/tool
-- [ ] Indexed palette mode for runtime color manipulation
-- [ ] Collision data export
-- [ ] Unity Rule Tile generator
-
----
-
-## 10. Summary
-
-| Aspect | Decision |
-|--------|----------|
-| **Image format** | Baked RGBA PNG |
-| **Animation** | Pre-rendered frames stacked vertically |
-| **Data format** | JSON with autotile rules |
-| **Files per tileset** | 2 (chunks.png + tileset.json) |
-| **Autotile system** | 8-direction bitmask (256 configurations × 3 variations) |
-| **Terrain types** | wall, secondary (water/lava/void), floor |
-| **Engine target** | Godot 4.x primary, engine-agnostic design |
-
+- [x] Verify indexed PNG preserves palette indices (not converted to RGBA)
+- [x] Test tileset 1 (Beach Cave) — has animation
+- [x] Test tileset 3 (Mt. Bristle) — static, no animation
+- [x] Test tileset 20 (Quicksand Pit) — has animation
+- [x] Verify palette 10 indices (160-175) are used in water areas
+- [x] Confirm palette 11 (176-191) is not used in tested tilesets
+- [ ] Check shader produces correct animation in Godot
