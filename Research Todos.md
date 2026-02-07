@@ -35,8 +35,8 @@
 - Dynamic cell sizing to accommodate all frame extents
 
 **Status:** Implementation complete. Pending visual verification after:
-- [ ] Shadow sprite extraction
-- [ ] Dungeon tileset extraction
+- [x] Shadow sprite extraction
+- [x] Dungeon tileset extraction
 
 **See:** `Systems/positioning_system.md` for ROM coordinate system research
 
@@ -46,27 +46,46 @@
 - Test with various Pokemon sizes (Pichu, Snorlax, Wailord)
 - Confirm shadow alignment works with anchor system
 
-### Priority 4: Dungeon tileset extraction via python ✓ Created python implementation
+### Priority 4: Dungeon Tileset Extraction ✓ COMPLETE
 
-- Look at `dungeon_tileset_spec.md`
+Python implementation complete. All valid tilesets (0-143) extracted with autotile rules, palette animation, and dungeon name mappings.
 
-### Priority 5: Shadow Sprite Extraction ✓ Researching construction and palettes
+**See:** `dungeon_tileset_spec.md` (canonical reference, integrates implementation findings)
 
-**Goal:** Extract shadow sprites from ROM instead of providing static assets.
+**Next:** Port to Rust scraper (Phase 4 in spec).
 
-**Location:** `DUNGEON/dungeon.bin`
-- File 995 = `DBIN_RAW_IMAGE_4BPP` (shadow texture, raw 4bpp tiles)
-- File 996 = `SIR0` (unknown, possibly OAM metadata)
-- File 997 = `DPL` (shadow palette, 16 colors)
+### Priority 5: Shadow Sprite Extraction ✓ COMPLETE
 
-**Shadow system (from Ghidra):**
-- Shadow size per monster at `monster.md + 0x2E` (within 0x44-byte entries)
-- Land vs water shadows (water uses remapped index via `DAT_02304c30`)
-- OAM attributes at `DAT_02058c0c` (0x10 bytes per size, land+water variants)
+Python implementation complete. 6 shadow sprites extracted (3 land + 3 water, small/medium/large).
 
-**See:** `shadow_extraction_plan.md` for full implementation details
+**Key findings vs original plan:**
+- File 996 is water ripples, NOT shadow OAM metadata
+- Palette is RGBX 4-byte format, not BGR555
+- 3 shadow sizes (no XL), tile assignments fully verified
+- File 995 has u32 tile count header (50 tiles)
 
-### Priority 6: Layer Spawn Timing
+**See:** `shadow_extraction_plan.md` (canonical reference, integrates implementation findings)
+
+**Next:** Port to Rust scraper.
+
+### Priority 6: Water Ripple Extraction ✓ COMPLETE
+
+Python implementation complete. Enemy (32×8) and ally (32×16) ripples extracted, 3 animation frames each.
+
+**Key findings:**
+- File 996 is SIR0-wrapped, contains interleaved enemy/ally frames
+- 8bpp format (unlike shadows which are 4bpp)
+- Ally ripple has yellow circle baked into sprite data
+- Shares palette with shadows (file 997)
+
+**See:** `water_ripples_plan.md` (canonical reference, integrates implementation findings)
+
+**Next:** Port to Rust scraper.
+
+### Priority 7: Refactor the plans into the architecture
+Might have information in the plans not in the architecture which could be helpful will need to specify between skytemple implementation and ghidra findings etc.
+
+### Priority 8: Layer Spawn Timing
 
 **Question:** Do all 4 effect layers spawn simultaneously or sequentially?
 
@@ -193,6 +212,30 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 - [x] SequenceFrame offsets are small animation deltas (±1-2 pixels)
 - [x] Meta-frame renderer combines base position with offsets
 
+### Dungeon Tileset Extraction ✓
+- [x] Python implementation complete (all tilesets 0-143)
+- [x] 47-tile blob pattern documented
+- [x] Per-color palette animation system documented
+- [x] Debug tilesets 144-169 identified and skipped
+- [x] Tileset 170 redirect handled
+- [x] Autotile rules (256 configs × 3 variations) exported to JSON
+- **See:** `dungeon_tileset_spec.md`
+
+### Shadow Sprite Extraction ✓
+- [x] Python implementation complete (6 sprites: 3 land + 3 water)
+- [x] File 995: Raw 4bpp with u32 tile count header (50 tiles)
+- [x] File 997: RGBX palette (shared with ripples)
+- [x] 3 sizes (small/medium/large), no XL
+- [x] Verified tile assignments for all 6 sprites
+- **See:** `shadow_extraction_plan.md`
+
+### Water Ripple Extraction ✓
+- [x] Python implementation complete (enemy + ally, 3 frames each)
+- [x] File 996: SIR0-wrapped, 8bpp, 2304 bytes content
+- [x] Enemy: 32×8 cyan/white rings, Ally: 32×16 with yellow circle
+- [x] Shares palette with shadows (file 997)
+- **See:** `water_ripples_plan.md`
+
 ---
 
 ## Reference
@@ -223,13 +266,13 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 | 5 | Screen | Screen effect (file_index + 0x10C) - placeholder |
 | 6 | Wba | WBA format - not implemented |
 
-### Shadow System Reference
+### Shadow & Ripple System Reference
 | Component | Location | Notes |
 |-----------|----------|-------|
-| Shadow texture | dungeon.bin[995] | Raw 4bpp tiles |
-| Shadow metadata | dungeon.bin[996] | SIR0 wrapped, unknown structure |
-| Shadow palette | dungeon.bin[997] | DPL format, 16 colors |
-| Shadow size/monster | monster.md + 0x2E | Byte value per monster |
+| Shadow texture | dungeon.bin[995] | Raw 4bpp, u32 header, 50 tiles |
+| Water ripples | dungeon.bin[996] | SIR0 wrapped, 8bpp, 3 frames |
+| Shared palette | dungeon.bin[997] | RGBX format, 16 colors × 2 palettes |
+| Shadow size/monster | monster.md + 0x2E | Byte value within 0x44-byte entries |
 | OAM attributes | DAT_02058c0c | 0x10 bytes per size |
 | X offsets | DAT_02058c10 | 4 bytes per size |
 | Water remap | DAT_02304c30 | land_size → water_size |
@@ -239,5 +282,6 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 |------|-------------|
 | `Systems/effect_lifecycle.md` | How looping effects are stopped in ROM |
 | `Systems/positioning_system.md` | ROM sprite coordinate system (verified functions) |
-| `shadow_extraction_plan.md` | Plan for extracting shadow sprites from dungeon.bin |
-| `dungeon_tileset_spec.md` | Dungeon tileset extraction specification |
+| `shadow_extraction_plan.md` | Shadow sprite extraction (verified, Python complete) |
+| `water_ripples_plan.md` | Water ripple extraction (verified, Python complete) |
+| `dungeon_tileset_spec.md` | Dungeon tileset extraction (verified, Python complete) |
