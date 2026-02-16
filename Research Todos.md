@@ -46,44 +46,27 @@
 - Test with various Pokemon sizes (Pichu, Snorlax, Wailord)
 - Confirm shadow alignment works with anchor system
 
-### Priority 4: Dungeon Tileset Extraction ✓ COMPLETE
+### Priority 4: Dungeon Tileset Extraction ✓ COMPLETE — PORTED TO RUST
 
-Python implementation complete. All valid tilesets (0-143) extracted with autotile rules, palette animation, and dungeon name mappings.
+Python implementation complete. Ported to Rust scraper — outputs organised tileset PNGs, palette textures, and layout/tilesets JSON.
 
-**See:** `dungeon_tileset_spec.md` (canonical reference, integrates implementation findings)
+**See:** `dungeon_tileset_spec.md` (canonical spec), `src/dungeon/tileset/` (Rust implementation)
 
-**Next:** Port to Rust scraper (Phase 4 in spec).
+### Priority 5: Shadow Sprite Extraction ✓ COMPLETE — PORTED TO RUST
 
-### Priority 5: Shadow Sprite Extraction ✓ COMPLETE
+Python implementation complete. Ported to Rust scraper — outputs 6 individual PNGs (enemy/ally × small/medium/large) to `DUNGEON/shadows/`.
 
-Python implementation complete. 6 shadow sprites extracted (3 land + 3 water, small/medium/large).
+**See:** `Data Structures/dungeon_bin.md` (ROM format reference), `src/dungeon/shadows.rs` (Rust implementation)
 
-**Key findings vs original plan:**
-- File 996 is water ripples, NOT shadow OAM metadata
-- Palette is RGBX 4-byte format, not BGR555
-- 3 shadow sizes (no XL), tile assignments fully verified
-- File 995 has u32 tile count header (50 tiles)
+### Priority 6: Water Ripple Extraction ✓ COMPLETE — PORTED TO RUST
 
-**See:** `shadow_extraction_plan.md` (canonical reference, integrates implementation findings)
+Python implementation complete. Ported to Rust scraper — outputs 2 sprite sheets (enemy 96×8, ally 96×16, 3 frames horizontal) to `DUNGEON/ripples/`.
 
-**Next:** Port to Rust scraper.
+**See:** `Data Structures/dungeon_bin.md` (ROM format reference), `src/dungeon/ripples.rs` (Rust implementation)
 
-### Priority 6: Water Ripple Extraction ✓ COMPLETE
+### Priority 7: Refactor Plans into Architecture ✓ COMPLETE
 
-Python implementation complete. Enemy (32×8) and ally (32×16) ripples extracted, 3 animation frames each.
-
-**Key findings:**
-- File 996 is SIR0-wrapped, contains interleaved enemy/ally frames
-- 8bpp format (unlike shadows which are 4bpp)
-- Ally ripple has yellow circle baked into sprite data
-- Shares palette with shadows (file 997)
-
-**See:** `water_ripples_plan.md` (canonical reference, integrates implementation findings)
-
-**Next:** Port to Rust scraper.
-
-### Priority 7: Refactor the plans into the architecture
-Might have information in the plans not in the architecture which could be helpful will need to specify between skytemple implementation and ghidra findings etc.
+Shadow and ripple ROM format details consolidated into `Data Structures/dungeon_bin.md`. Plan files (`shadow_extraction_plan.md`, `water_ripples_plan.md`) deleted — implementation details live in Rust source. `dungeon_tileset_spec.md` retained as canonical tileset spec.
 
 ### Priority 8: Layer Spawn Timing
 
@@ -236,6 +219,33 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 - [x] Shares palette with shadows (file 997)
 - **See:** `water_ripples_plan.md`
 
+### Shadow Sprite Extraction ✓ (PORTED TO RUST)
+- [x] Python implementation complete (6 sprites: 3 enemy + 3 ally, small/medium/large)
+- [x] File 995: Raw 4bpp with u32 tile count header (50 tiles)
+- [x] File 997: RGBX palette (shared with ripples)
+- [x] 3 sizes (small/medium/large), no XL
+- [x] Verified tile assignments for all 6 sprites
+- [x] Ported to Rust scraper (`src/dungeon/shadows.rs`)
+- **See:** `Data Structures/dungeon_bin.md`
+
+### Water Ripple Extraction ✓ (PORTED TO RUST)
+- [x] Python implementation complete (enemy + ally, 3 frames each)
+- [x] File 996: SIR0-wrapped, 8bpp, 2304 bytes content
+- [x] Enemy: 32×8 cyan/white rings, Ally: 32×16 with yellow circle
+- [x] Shares palette with shadows (file 997)
+- [x] Ported to Rust scraper (`src/dungeon/ripples.rs`)
+- **See:** `Data Structures/dungeon_bin.md`
+
+### Dungeon Tileset Extraction ✓ (PORTED TO RUST)
+- [x] Python implementation complete (all tilesets 0-143)
+- [x] 47-tile blob pattern documented
+- [x] Per-color palette animation system documented
+- [x] Debug tilesets 144-169 identified and skipped
+- [x] Tileset 170 redirect handled
+- [x] Autotile rules (256 configs × 3 variations) exported to JSON
+- [x] Ported to Rust scraper (`src/dungeon/tileset/`)
+- **See:** `dungeon_tileset_spec.md`
+
 ---
 
 ## Reference
@@ -280,8 +290,7 @@ Some effects detected as directional (sequence_count % 8 == 0) have 8 identical 
 ### Research Documentation Files
 | File | Description |
 |------|-------------|
+| `Data Structures/dungeon_bin.md` | Shadow, ripple, and palette ROM formats (files 995-997) |
 | `Systems/effect_lifecycle.md` | How looping effects are stopped in ROM |
 | `Systems/positioning_system.md` | ROM sprite coordinate system (verified functions) |
-| `shadow_extraction_plan.md` | Shadow sprite extraction (verified, Python complete) |
-| `water_ripples_plan.md` | Water ripple extraction (verified, Python complete) |
-| `dungeon_tileset_spec.md` | Dungeon tileset extraction (verified, Python complete) |
+| `dungeon_tileset_spec.md` | Dungeon tileset extraction spec (canonical reference) |
