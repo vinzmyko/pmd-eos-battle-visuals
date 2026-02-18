@@ -31,6 +31,34 @@ do {
 } while (iVar2 < 0x20);  // 32 iterations
 ```
 
+## Global Effect State
+
+The global state area sits immediately after the 32-slot pool (32 × 0x13C = 0x2780 bytes).
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x2780 | int32 | instance_counter | Monotonically increasing, assigned to new effects |
+| +0x2784 | int32 | shared_wan_state | 0 or 1; controls which shared WAN file is active |
+| +0x2788 | int16 | shared_sprite_id | WAN table entry for pre-loaded file 0 or file 1 |
+| +0x278C | int32 | unknown_278c | Written at init, used for param_1 + 0x54 in types 1-3 |
+| +0x2790 | int16 | palette_variant | Palette param, only written in state 1 path |
+| +0x2794 | int32 | unknown_2794 | Used for type 3 sprite setup |
+| +0x279C | int16 | unknown_279c | Read in types 1 and 4 |
+| +0x279E | uint8 | screen_param_0 | Type 5 screen_effect_param (param_2 == 0) |
+| +0x279F | uint8 | screen_param_1 | Type 5 screen_effect_param (param_2 == 1) |
+| +0x27A0 | uint8 | memory_pressure | Set to 1 when effect memory allocation fails |
+
+**Base address:** `*DAT_022be72c` = `0x022DC1C0` (heap-allocated)
+
+**Evidence:** `FUN_022be44c` increments instance_counter
+```c
+iVar6 = *(int *)(*piVar1 + 0x2780);
+*(int *)(*piVar1 + 0x2780) = iVar6 + 1;
+ptr[3] = iVar6;  // Assign to new effect's instance_id
+```
+
+> See `Data Structures/effect_animation_info.md` section "WAN File 0/1 Shared Resource System" for how +0x2788 is initialised
+
 ## Structure Definition
 ```c
 struct effect_context {

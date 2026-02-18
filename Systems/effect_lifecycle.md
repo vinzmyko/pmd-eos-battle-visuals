@@ -14,8 +14,11 @@
 1. ALLOCATION (FUN_022be44c)
    - Find free slot (instance_id == -1)
    - Clear slot memory
-   - Load WAN/screen resources
-   - Assign unique instance_id
+   - Load resources (type-dependent):
+     - Types 1/2: Reuse shared sprite at base + 0x2788 (no file loading)
+     - Types 3/4: Load per-effect WAN file via FUN_022c03f4
+     - Types 5/6: Allocate screen effect resource via FUN_022c0450
+   - Assign unique instance_id from base + 0x2780 counter
    
 2. INITIALIZATION (FUN_022bdfc0)
    - Copy from effect_animation_info:

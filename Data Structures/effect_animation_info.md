@@ -49,8 +49,8 @@ Determines rendering path, resource allocation, and system state requirements.
 | Value | Name | Description | Resource Handling |
 |-------|------|-------------|-------------------|
 | 0 | Invalid | No effect | Returns -1 |
-| 1 | WanFile0 | Standard WAN | Shared resource, requires state == 0 |
-| 2 | WanFile1 | Standard WAN | Shared resource, requires state == 1 |
+| 1 | SharedWan_State0 | Uses pre-loaded WAN File 0 | Shared sprite at +0x2788, requires state == 0. No per-effect file loading. |
+| 2 | SharedWan_State1 | Uses pre-loaded WAN File 1 | Shared sprite at +0x2788, requires state == 1. No per-effect file loading. |
 | 3 | WanOther | Standard WAN | Clears conflicting type-3 with different file_index |
 | 4 | Wat | WAT format | Clears conflicting type-4 effects |
 | 5 | Screen | Screen effect | Uses file_index + 0x10C, special allocation |
@@ -63,6 +63,22 @@ if ((iVar6 == 2) && (*(int *)(*DAT_022be72c + 0x2784) != 1)) {
 }
 if ((iVar6 == 1) && (*(int *)(*DAT_022be72c + 0x2784) != 0)) {
     return -1;  // Type 1 requires state == 0
+}
+```
+
+**Evidence:** Types 1/2 skip resource loading in `FUN_022bdfc0`
+```c
+if (iVar5 != 1 && iVar5 != 2) {
+    FUN_022c05e0(iVar5, *(int *)(param_1 + 0x44), param_2);  // Cache check - SKIPPED for types 1/2
+}
+```
+
+**Evidence:** Types 1/2 reuse pre-loaded sprite in `FUN_022be44c`
+```c
+if (iVar6 - 1U < 2) {  // anim_type 1 or 2
+    uVar2 = *(undefined2 *)(*DAT_022be72c + 0x2788);  // Shared pre-loaded sprite ID
+} else {
+    uVar2 = FUN_022c03f4(iVar6, (short)peVar3->file_index, uVar7);  // Normal per-effect load
 }
 ```
 
@@ -79,9 +95,46 @@ if (iVar6 == 3) {
 }
 ```
 
+
+### WAN File 0/1 Shared Resource System
+
+Types 1 and 2 use a **pre-loaded shared sprite** rather than loading per-effect WAN files. This is initialized at dungeon start by `FUN_022bd82c`.
+
+**Initialization (FUN_022bd82c):**
+
+1. File 0x124 (292) is loaded temporarily for palette/VRAM setup, then **deleted**
+2. **State 0:** Loads effect pack file **0** → stores sprite ID at base + 0x2788
+3. **State 1:** Loads effect pack file **1** → stores sprite ID at base + 0x2788
+
+```c
+// State 0 path:
+iVar3 = LoadWanTableEntryFromPack(wan_table, PACK_ARCHIVE_EFFECT, 0x124, 0, '\0');
+FUN_0201dbb8((short)iVar3, ...);  // Palette/VRAM setup
+FUN_022bd75c((short)iVar3, 0, 0);
+DeleteWanTableEntryVeneer(wan_table, iVar3);  // Delete file 292
+
+iVar3 = LoadWanTableEntryFromPack(wan_table, PACK_ARCHIVE_EFFECT, 0, 0, '\0');  // Load file 0
+*(short *)(*base + 0x2788) = (short)iVar3;  // Store sprite ID
+
+// State 1 path:
+// Similar, but loads file 1 instead of file 0, with additional palette config
+```
+
+**Key implication:** The `animation_index` field for type 1/2 effects indexes directly into the unified file 0 or file 1's animation sequence table. The `file_index` field is **ignored** for types 1/2 — no per-effect file loading occurs.
+
+**Called from:** `RunDungeon` → `FUN_022de904` → `FUN_022bd82c`
+
+| Function | Address (NA) | Purpose |
+|----------|--------------|---------|
+| `FUN_022bd82c` | `0x022bd82c` | Effect system init, loads shared WAN files |
+| `FUN_022de904` | `0x022de904` | Dungeon subsystem init (allocates global state) |
+
+
 ### file_index (offset 0x04)
 
 Index into effect.bin pack archive. For type 5 effects, actual index is `file_index + 0x10C` (268).
+
+**Note:** For anim_type 1 and 2, `file_index` is **not used for file loading**. These types use the pre-loaded shared sprite at base + 0x2788. The `file_index` value may still be present in the table but is functionally ignored.
 
 **Evidence:** `FUN_022c01fc`
 ```c
@@ -419,7 +472,9 @@ if (0x1f < (int)uVar7) { ... }
 
 ## Open Questions
 
-- Exact purpose of types 1 vs 2 (both use shared resource, differ by state check)
+- What determines state 0 vs 1 (param_1 to FUN_022bd82c, set by RunDungeon — likely dungeon type)
+- Purpose of +0x2790 (palette variant, only written in state 1 path)
+- Purpose of +0x279C (read in types 1 and 4, secondary animation parameter)
 - Complete screen effect control structure at context + 0xE8
 - How looping effects are terminated
 
@@ -436,5 +491,7 @@ if (0x1f < (int)uVar7) { ... }
 | `FUN_0201cf90` | `0x0201cf90` | Calculate attachment point offset |
 | `FUN_0201da20` | `0x0201da20` | Sprite sequence count lookup from WAN_TABLE |
 | `LAB_0201da00` | `0x0201da00` | Extract sequence count from WAN header |
+| `FUN_022bd82c` | `0x022bd82c` | Effect system init, loads shared WAN File 0/1 |
+| `FUN_022c05e0` | `0x022c05e0` | Cache/conflict check for loaded effect files (types 3/4/6) |
 | `SetAnimationForAnimationControl` | - | Configure animation parameters |
 | `SetAnimationForAnimationControlInternal` | `0x0201C5C4` | Inner animation setup (critical group/sequence logic) |
