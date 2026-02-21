@@ -84,12 +84,37 @@ Bit field controlling animation behavior.
 
 | Bits | Mask | Accessor | Purpose |
 |------|------|----------|---------|
-| 0-2 | 0x07 | `FUN_022bfd58` | Animation category (0-7) |
+| 0-2 | 0x07 | `FUN_022bfd58` | Projectile wave pattern (0=straight, 1=vertical sine, 2=spiral) |
 | 3 | 0x08 | `FUN_022bfd6c` | Dual-target effect (both attacker and target) |
 | 4 | 0x10 | `FUN_022bfd8c` | Skip fade-in effect |
-| 5 | 0x20 | `FUN_022bfdac` | Unknown |
+| 5 | 0x20 | `FUN_022bfdac` | Face direction + pre-animation delay |
 | 6 | 0x40 | `FUN_022bfdcc` | Add post-animation delay |
-| 7 | 0x80 | - | Unknown/unused |
+| 7 | 0x80 | Unknown/unused |
+
+**Bits 0-2: Projectile Wave Pattern**
+
+Value is read by `FUN_022bfd58`, returned through the charge handler (`FUN_02324e78`) → `FUN_02322ddc` → `FUN_02322374`, and passed as `param_4` to `FUN_023230fc` (projectile motion handler).
+
+| Value | Pattern | Description |
+|-------|---------|-------------|
+| 0 | Straight | No wave offset, direct line |
+| 1 | Vertical Sine | Up-down oscillation perpendicular to travel |
+| 2 | Spiral | Circular/helical motion using two angles |
+
+Previously thought to be determined at runtime — confirmed stored directly in move flags.
+
+**Bit 5: Face Direction + Pre-Animation Delay**
+
+When set, `FUN_02304a48` is called to reset the attacker's facing direction, followed by `AnimationDelayOrSomething` to add a short pause before the main monster animation begins.
+
+**Evidence:** `FUN_02322ddc`
+```c
+bVar7 = FUN_022bfdac((uint)*(ushort *)(param_2 + 4));
+if (bVar7) {
+    FUN_02304a48(param_1, (uint)*(byte *)(param_1[0x2d] + 0x4c));
+    AnimationDelayOrSomething('\x01');
+}
+```
 
 **Evidence:** Flag bit 3 check in `ExecuteMoveEffect`
 ```c
@@ -394,8 +419,7 @@ if (move_id == MOVE_DRAIN_PUNCH || move_id == MOVE_LEECH_LIFE) {
 
 ## Open Questions
 
-- Full purpose of animation category (flag bits 0-2)
-- What flag bit 5 controls
+- What flag bit 7 (0x80) controls (if anything)
 - Complete list of moves using flag bit 3 (dual-target)
 
 ## Functions Used
