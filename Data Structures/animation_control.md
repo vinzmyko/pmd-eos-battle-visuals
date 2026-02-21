@@ -285,9 +285,24 @@ Returns:
 ## Open Questions
 
 - Complete animation_control structure (many fields unknown)
-- How timing/speed is controlled within animation_control
-- Relationship between frame_id and actual frame timing
 - What params 4, 6, 8 of SetAnimationForAnimationControl do
+
+## Resolved Questions
+
+### Timing/Speed Control
+
+`field2_0x4` is the playback speed divisor for duration decrement. It is **hardcoded to 1** in `SetAnimationForAnimationControlInternal` for all sprite types. No speed multiplier mechanism exists.
+
+### Frame Duration Flow
+
+1. `LoadAnimationFrameAndIncrementInAnimationControl` copies `wan_animation_frame.duration` (uint8) into `anim_ctrl->anim_frame_duration` (uint16)
+2. Each tick, `SwitchAnimationControlToNextFrame` decrements `anim_frame_duration` by `field2_0x4` (always 1)
+3. When duration reaches 0, next frame loads
+4. If `field5_0xa` (pre-delay) > 0, it decrements first before duration starts counting
+
+### loop_start
+
+Per-animation-group field allowing looping animations to restart from a mid-point frame offset rather than frame 0. Copied from `wan_animation_group.loop_start` during initialization.
 
 ## Functions Used
 
