@@ -447,6 +447,29 @@ for (i = 0; i < 9; i++) {
 - **Types 98/99:** Fixed 2-frame timing, effect spawns once at start before direction loop
 - **No synchronization:** Effect plays independently while sprite animation loops through directions
 
+## Animation Frame Duration System
+
+Frame duration is a **uint8_t** in raw game ticks, copied verbatim from WAN data with no transformation.
+
+**Confirmed chain:**
+1. `wan_animation_frame.duration` — uint8_t, max 255 ticks (~4.25s at 60fps). Value 0 = end-of-animation marker.
+2. `LoadAnimationFrameAndIncrementInAnimationControl` copies directly: `anim_ctrl->anim_frame_duration = (ushort)anim_frame->duration`
+3. `SwitchAnimationControlToNextFrame` decrements by `field2_0x4` each tick
+4. `field2_0x4` is **hardcoded to 1** in `SetAnimationForAnimationControlInternal` — no speed multiplier exists
+
+**Implication for Q1 (charge speed):** The ROM timing system is confirmed correct and identical for all effect types (including WanFile0/1 shared effects). If charge effects play too fast, the issue is in the scraper's duration extraction or the client's frame timing, not a ROM-side speed difference.
+
+### Pre-Spawn Delay (FUN_02325d7c)
+
+Before spawning layer 0 (charge) and layer 1 (secondary) effects, if the move has a type 5 screen effect, the system waits for screen readiness then adds a **5-frame delay** via `FUN_022ea428(5)`.
+
+### Charge Fade-In (FUN_022bfdec)
+
+Specific moves trigger a brightness fade-in during the charge phase:
+- Move 0x65 (101 / Hyper Beam)
+- Move 0x1bc (444 / Roar of Time)
+- One additional move stored in `DAT_022bfe08` (unknown, needs data read)
+
 ## Timing Summary
 
 | Action | Function | Frames |
@@ -463,7 +486,6 @@ for (i = 0; i < 9; i++) {
 
 - Full task scheduler structure and task list layout
 - What param_2 in `FUN_022ea370` controls (passed to inner functions but purpose unclear)
-- How looping effects (`unk_repeat` flag) are terminated
 
 ## Functions Used
 
