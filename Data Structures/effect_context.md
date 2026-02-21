@@ -70,10 +70,11 @@ struct effect_context {
     /* 0x14 */ int32_t effect_id;          // Index into effect_animation_info
     /* 0x18 */ int32_t delay_counter;      // Countdown before tick processes
     /* 0x1C */ int32_t direction;          // 0-7 or -1
-    /* 0x20 */ int16_t current_x;
-    /* 0x22 */ int16_t current_y;
-    /* 0x24 */ int16_t velocity_x;
-    /* 0x26 */ int16_t velocity_y;
+    /* 0x20 */ int16_t current_x;          // Base position (entity pixel_x >> 8, or projectile pos)
+    /* 0x22 */ int16_t current_y;          // Base position (entity pixel_y >> 8, or projectile pos)
+    /* 0x24 */ int16_t offset_x;           // Dual-purpose: attachment offset OR projectile arc offset
+    /* 0x26 */ int16_t offset_y;           // Dual-purpose: attachment offset OR projectile arc offset
+    /* 0x28 */ int8_t  attachment_point;   // Copied from effect_animation_info, read by binding system
     /* 0x2C */ int32_t z_priority;
     /* ... */
     /* 0x3C */ uint32_t flags;             // Bit 0 = runtime loop flag
@@ -330,6 +331,7 @@ void FUN_022bdfc0(int param_1, ...)
 
 ## Open Questions
 
+- Purpose of effect_context + 0x136 (position override flag) and + 0x138 (override position source)
 - Complete layout between offsets 0x2C-0x3C
 - Complete layout between offsets 0xAC-0xE4
 - Screen effect control structure details (offset 0xE8)
