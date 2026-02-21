@@ -214,28 +214,24 @@ sVar1 = *(short *)(DAT_02323c34 + iVar4);        // Reversed Y delta
 
 ### Wave Pattern Determination
 
-Wave pattern is determined at **runtime by caller logic**, not stored in move/effect data tables.
+Wave pattern is stored in **move_animation_info flags bits 0-2** (mask 0x07). The value flows through the charge handler → `FUN_02322ddc` → `FUN_02322374` → `FUN_023230fc` as param_4.
 
-**Evidence:** `FUN_02322374`
-```c
-// Wave pattern comes from FUN_02322ddc return value
-bVar3 = FUN_02322ddc((int *)param_1, (byte *)move, (int)local_140, (uint)ptVar19, param_3,
-                     iVar20 == 0);
-uVar11 = (uint)bVar3;  // This becomes param_4 (wave pattern)
+| Value | Pattern |
+|-------|---------|
+| 0 | Straight (no wave) |
+| 1 | Vertical sine |
+| 2 | Spiral |
 
-// Later passed to projectile motion
-FUN_023230fc(param_1, (undefined2 *)move, (int)pmVar22, uVar11, param_3, param_5, bVar23);
-//                                                      ^^^^^^ wave pattern
+**Call chain:**
+```
+FUN_02324e78 → FUN_022bfd58(move_id) reads flags & 0x07, returns value
+FUN_02322ddc → returns it to caller
+FUN_02322374 → passes as param_4 to FUN_023230fc
 ```
 
-**Reverse direction projectiles** (`FUN_0232393c`) always use wave pattern 0:
+**Reverse direction projectiles** (`FUN_0232393c`) always use wave pattern 0 regardless of flags.
 
-**Evidence:** `ExecuteMoveEffect`
-```c
-FUN_0232393c((int)attacker, (int *)entity, (int)auStack_74, uVar11, 0);  // Always 0 for wave
-```
-
-**Implementation Recommendation:** Use wave pattern 0 (straight line) for all moves as a safe default. Wave patterns 1/2 are edge cases determined by complex game logic in `FUN_02322ddc`.
+**Implementation:** Read `move_animation_info.flags & 0x07` for forward projectiles. Use 0 for reverse projectiles.
 
 ### Amplitude Calculation
 
@@ -458,8 +454,37 @@ For accurate projectile recreation:
 | **Dest X** | `target_tile.x * 24 + 12` |
 | **Dest Y** | `target_tile.y * 24 + 16` |
 | **Direction** | `attacker.monster_info[0x4C]` (0-7) |
-| **Wave Pattern** | `0` (straight line - safe default) |
+| **Wave Pattern** | `move_animation_info.flags & 0x07` (0=straight, 1=sine, 2=spiral) |
 | **Speed** | From `move_animation_info.projectile_speed` mapped via table |
+
+
+## Projectile Arc Effect (FUN_022beb2c)
+
+The per-frame position update function also creates a subtle arc by modifying the offset fields (+0x24/+0x26) each frame.
+
+**Calculation each frame:**
+1. Compute Chebyshev distance: `n = max(|dest_x - src_x|, |dest_y - src_y|) / 4`
+2. Add +9 to Y offset (gravity bias)
+3. Scale both offsets by `(n-1)/n` — decays toward zero as projectile travels
+4. Subtract 9 from Y offset — net effect is `-9/n` added per frame
+
+The net Y adjustment creates a downward arc that intensifies as the projectile approaches its target (as `n` shrinks).
+
+**Note:** The offset fields at effect_context +0x24/+0x26 serve **dual purpose**: for entity-attached effects they hold attachment point offsets (written by `FUN_022bfb6c`), but for projectiles they hold decaying arc offsets (written by `FUN_022beb2c`).
+
+**Evidence:** `FUN_022beb2c`
+```c
+*(short *)(iVar4 + 0x20) = *param_2;      // Set X position
+*(short *)(iVar4 + 0x22) = param_2[1];    // Set Y position
+// ... distance calculation ...
+*(short *)(iVar4 + 0x26) += 9;            // Gravity bias
+*(short *)(iVar4 + 0x24) *= (n - 1);      // Decay X offset
+*(short *)(iVar4 + 0x26) *= (n - 1);      // Decay Y offset
+*(short *)(iVar4 + 0x24) /= n;
+*(short *)(iVar4 + 0x26) /= n;
+*(short *)(iVar4 + 0x26) -= 9;            // Remove bias, leaving net arc
+*(int *)(iVar4 + 0x2c) = z_priority;
+```
 
 ## Cross-References
 
