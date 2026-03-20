@@ -6,8 +6,9 @@
 - SMA is a distinct format from WAN, with its own image data, palette, and animation blocks
 - 18 animation entries confirmed in the US ROM (index 0 is a null/padding entry)
 - SkyTemple provides read+export support only — no write support or UI integration
-- The mapping from status condition ID → SMA animation index is NOT yet documented
-- The display system (how/where icons are rendered in dungeon mode) is NOT yet documented
+- The complete mapping chain is now documented:
+  **game status → `UpdateStatusIconFlags()` → `status_icon_flags` bitfield → renderer → SMA animation index + palette**
+- The display system renders icons above monster sprites in dungeon mode via `FUN_022dc820`
 
 ## File Location
 
@@ -24,20 +25,20 @@
 | 1 | 1 | 1 | 14 | 0 |
 | 2 | 2 | 2 | 7 | 448 |
 | 3 | 2 | 2 | 16 | 1344 |
-| 4 | 4 | 4 | 6 | 3392 |
-| 5 | 4 | 2 | 4 | 6464 |
-| 6 | 2 | 2 | 9 | 7488 |
-| 7 | 2 | 2 | 8 | 8640 |
-| 8 | 1 | 2 | 8 | 9664 |
-| 9 | 2 | 2 | 13 | 10176 |
-| 10 | 2 | 2 | 10 | 11840 |
-| 11 | 2 | 2 | 13 | 13120 |
-| 12 | 1 | 1 | 14 | 14784 |
-| 13 | 2 | 2 | 10 | 15232 |
-| 14 | 1 | 1 | 14 | 16512 |
-| 15 | 2 | 2 | 8 | 16960 |
-| 16 | 2 | 2 | 10 | 17984 |
-| 17 | 2 | 2 | 13 | 19264 |
+| 4 | 4 | 4 | 6 | 6464 |
+| 5 | 4 | 2 | 4 | 7488 |
+| 6 | 2 | 2 | 9 | 8640 |
+| 7 | 2 | 2 | 8 | 9664 |
+| 8 | 1 | 2 | 8 | 10176 |
+| 9 | 2 | 2 | 13 | 11840 |
+| 10 | 2 | 2 | 10 | 13120 |
+| 11 | 2 | 2 | 13 | 14784 |
+| 12 | 1 | 1 | 14 | 15232 |
+| 13 | 2 | 2 | 10 | 16512 |
+| 14 | 1 | 1 | 14 | 16960 |
+| 15 | 2 | 2 | 8 | 17984 |
+| 16 | 2 | 2 | 10 | 19264 |
+| 17 | 2 | 2 | 13 | — |
 
 1 block = 8 pixels. Palette index 0-15 are valid; each index references one of 16 palettes
 stored in the Color Data block.
@@ -65,22 +66,395 @@ for palette_idx in range(16):
 
 `SmaHandler.serialize()` raises `NotImplementedError` — write support does not exist.
 
+---
+
+## Status → Icon Mapping Chain (FULLY DOCUMENTED)
+
+The mapping chain has three stages:
+
+```
+1. Monster status fields  →  UpdateStatusIconFlags()  →  status_icon_flags bitfield (offset 0x218/0x21C)
+2. status_icon_flags bits →  Renderer (FUN_022dc820)  →  SMA animation index + palette index
+3. SMA animation index    →  manpu_su.sma frame data  →  rendered icon above monster sprite
+```
+
+### Stage 1: Status → Icon Bit (via lookup tables)
+
+`UpdateStatusIconFlags` (Ghidra: `022e3a58`–`022e3d90` region) reads each status class
+field from the monster struct, uses it as an index into an 8-byte-per-entry lookup table,
+and ORs the results into `status_icon_flags` at monster struct offset `0x218` (cycling)
+and `0x21C` (persistent/always-shown).
+
+**Source:** Ghidra decompilation of `UpdateStatusIconFlags`. Table pointer addresses
+confirmed at `022e3d94`–`022e3dcc`. Table data confirmed at `023511bc`–`02351583`.
+
+#### Lookup Table Addresses
+
+| Monster Offset | Status Field | Table Pointer Addr | Table Data Addr | Entries |
+|----------------|-------------|--------------------|-----------------|----|
+| 0xBD | `sleep_class_status.sleep` | `022e3d94` | `0235130c` | 6 |
+| 0xBF | `burn_class_status.burn` | `022e3d98` | `02351294` | 5 |
+| 0xC4 | `frozen_class_status.freeze` | `022e3d9c` | `02351374` | 8 |
+| 0xD0 | `cringe_class_status.cringe` | `022e3da0` | `023513b4` | 8 |
+| 0xD2 | `bide_class_status.bide` | `022e3da4` | `023513f4` | 14 |
+| 0xD5 | `reflect_class_status.reflect` | `022e3da8` | `023514f4` | 18 |
+| 0xD8 | `curse_class_status.curse` | `022e3dac` | `0235133c` | 7 |
+| 0xE0 | `leech_seed_class_status.leech_seed` | `022e3db0` | `023511fc` | 3 |
+| 0xEC | `sure_shot_class_status.sure_shot` | `022e3db4` | `023512bc` | 5 |
+| 0xEE | `long_toss_class_status.status` | `022e3db8` | `02351214` | 3 |
+| 0xEF | `invisible_class_status.status` | `022e3dbc` | `023512e4` | 5 |
+| 0xF1 | `blinker_class_status.blinded` | `022e3dc0` | `0235126c` | 5 |
+| 0xF3 | `muzzled` | `022e3dc4` | `023511bc` | 2 |
+| 0xF5 | `miracle_eye` | `022e3dc8` | `023511ec` | 2 |
+| 0xF7 | `magnet_rise` | `022e3dcc` | `023511cc` | 2 |
+
+#### Table Contents: Sleep (0x0235130c, 6 entries)
+
+| Index | Enum | Cycling (0x218) | Persistent (0x21C) | Icon Bit |
+|-------|------|-----------------|--------------------|----|
+| 0 | SLEEP_NONE | `0x00000000` | `0x00000000` | — |
+| 1 | SLEEP_SLEEP | `0x04000000` | `0x00000000` | bit 26: f_sleep |
+| 2 | SLEEP_SLEEPLESS | `0x00000001` | `0x00000000` | bit 0: f_sleepless |
+| 3 | SLEEP_NIGHTMARE | `0x04000000` | `0x00000000` | bit 26: f_sleep |
+| 4 | SLEEP_YAWNING | `0x00000000` | `0x00000000` | — |
+| 5 | SLEEP_NAPPING | `0x04000000` | `0x00000000` | bit 26: f_sleep |
+
+**Source:** ROM data at `0235130c`–`0235133b`
+
+#### Table Contents: Burn (0x02351294, 5 entries)
+
+| Index | Enum | Cycling (0x218) | Persistent (0x21C) | Icon Bit |
+|-------|------|-----------------|--------------------|----|
+| 0 | BURN_NONE | `0x00000000` | `0x00000000` | — |
+| 1 | BURN_BURN | `0x00000002` | `0x00000000` | bit 1: f_burn |
+| 2 | BURN_POISONED | `0x00000004` | `0x00000000` | bit 2: f_poison |
+| 3 | BURN_BADLY_POISONED | `0x00000008` | `0x00000000` | bit 3: f_toxic |
+| 4 | BURN_PARALYSIS | `0x00000000` | `0x00000000` | — (no icon) |
+
+**Source:** ROM data at `02351294`–`023512bb`
+
+#### Table Contents: Freeze (0x02351374, 8 entries)
+
+| Index | Enum | Cycling (0x218) | Persistent (0x21C) | Icon Bit |
+|-------|------|-----------------|--------------------|----|
+| 0 | FROZEN_NONE | `0x00000000` | `0x00000000` | — |
+| 1 | FROZEN_FROZEN | `0x00000000` | `0x00000001` | persistent bit 0: f_freeze |
+| 2 | FROZEN_SHADOW_HOLD | `0x00000000` | `0x00000000` | — |
+| 3 | FROZEN_WRAP | `0x00000000` | `0x00000000` | — |
+| 4 | FROZEN_WRAPPED | `0x00000000` | `0x00000000` | — |
+| 5 | FROZEN_INGRAIN | `0x00000000` | `0x00000000` | — |
+| 6 | FROZEN_PETRIFIED | `0x00000000` | `0x00000000` | — |
+| 7 | FROZEN_CONSTRICTION | `0x00000000` | `0x00000000` | — |
+
+**Source:** ROM data at `02351374`–`023513b3`
+
+#### Table Contents: Cringe (0x023513b4, 8 entries)
+
+| Index | Enum | Cycling (0x218) | Persistent (0x21C) | Icon Bit |
+|-------|------|-----------------|--------------------|----|
+| 0 | CRINGE_NONE | `0x00000000` | `0x00000000` | — |
+| 1 | CRINGE_CRINGE | `0x00000000` | `0x00000000` | — (no icon) |
+| 2 | CRINGE_CONFUSED | `0x00000010` | `0x00000000` | bit 4: f_confused |
+| 3 | CRINGE_PAUSED | `0x00000000` | `0x00000000` | — (no icon) |
+| 4 | CRINGE_COWERING | `0x00000020` | `0x00000000` | bit 5: f_cowering |
+| 5 | CRINGE_TAUNTED | `0x00000040` | `0x00000000` | bit 6: f_taunt |
+| 6 | CRINGE_ENCORE | `0x00000080` | `0x00000000` | bit 7: f_encore |
+| 7 | CRINGE_INFATUATED | `0x00000000` | `0x00000000` | — (no icon) |
+
+**Source:** ROM data at `023513b4`–`023513f3`
+
+#### Table Contents: Bide / Two-Turn (0x023513f4, 14 entries)
+
+All 14 entries are `0x00000000` / `0x00000000`. **No two-turn move statuses have icons.**
+
+**Source:** ROM data at `023513f4`–`02351463`
+
+#### Table Contents: Reflect (0x023514f4, 18 entries)
+
+| Index | Enum | Cycling (0x218) | Icon Bit |
+|-------|------|-----------------|-----|
+| 0 | REFLECT_NONE | `0x00000000` | — |
+| 1 | REFLECT_REFLECT | `0x00000100` | bit 8: f_reflect |
+| 2 | REFLECT_SAFEGUARD | `0x00000200` | bit 9: f_safeguard |
+| 3 | REFLECT_LIGHT_SCREEN | `0x00000400` | bit 10: f_light_screen |
+| 4 | REFLECT_COUNTER | `0x00000100` | bit 8: f_reflect |
+| 5 | REFLECT_MAGIC_COAT | `0x00000400` | bit 10: f_light_screen |
+| 6 | REFLECT_WISH | `0x00000000` | — |
+| 7 | REFLECT_PROTECT | `0x00000800` | bit 11: f_protect |
+| 8 | REFLECT_MIRROR_COAT | `0x00000200` | bit 9: f_safeguard |
+| 9 | REFLECT_ENDURING | `0x00001000` | bit 12: f_endure |
+| 10 | REFLECT_MINI_COUNTER | `0x00000100` | bit 8: f_reflect |
+| 11 | REFLECT_MIRROR_MOVE | `0x00000800` | bit 11: f_protect |
+| 12 | REFLECT_CONVERSION2 | `0x00000000` | — |
+| 13 | REFLECT_VITAL_THROW | `0x00000800` | bit 11: f_protect |
+| 14 | REFLECT_MIST | `0x00000100` | bit 8: f_reflect |
+| 15 | REFLECT_METAL_BURST | `0x00000100` | bit 8: f_reflect |
+| 16 | REFLECT_AQUA_RING | `0x00000100` | bit 8: f_reflect |
+| 17 | REFLECT_LUCKY_CHANT | `0x00000100` | bit 8: f_reflect |
+
+All persistent bits are zero.
+
+**Source:** ROM data at `023514f4`–`02351583`
+
+#### Table Contents: Curse (0x0235133c, 7 entries)
+
+| Index | Enum | Cycling (0x218) | Icon Bit |
+|-------|------|-----------------|-----|
+| 0 | CURSE_NONE | `0x00000000` | — |
+| 1 | CURSE_CURSED | `0x00004000` | bit 14: f_curse |
+| 2 | CURSE_DECOY | `0x00000000` | — |
+| 3 | CURSE_SNATCH | `0x00008000` | bit 15: f_embargo |
+| 4 | CURSE_GASTRO_ACID | `0x00008000` | bit 15: f_embargo |
+| 5 | CURSE_HEAL_BLOCK | `0x10000000` | bit 28: f_heal_block |
+| 6 | CURSE_EMBARGO | `0x00008000` | bit 15: f_embargo |
+
+All persistent bits are zero.
+
+**Source:** ROM data at `0235133c`–`02351373`
+
+#### Table Contents: Leech Seed (0x023511fc, 3 entries)
+
+All 3 entries are `0x00000000` / `0x00000000`. **No leech seed class statuses have icons.**
+
+**Source:** ROM data at `023511fc`–`02351213`
+
+#### Table Contents: Sure Shot (0x023512bc, 5 entries)
+
+| Index | Enum | Cycling (0x218) | Icon Bit |
+|-------|------|-----------------|-----|
+| 0 | SURE_SHOT_NONE | `0x00000000` | — |
+| 1 | SURE_SHOT_SURE_SHOT | `0x00010000` | bit 16: f_sure_shot |
+| 2 | SURE_SHOT_WHIFFER | `0x00020000` | bit 17: f_whiffer |
+| 3 | SURE_SHOT_SET_DAMAGE | `0x00040000` | bit 18: f_set_damage |
+| 4 | SURE_SHOT_FOCUS_ENERGY | `0x00080000` | bit 19: f_focus_energy |
+
+All persistent bits are zero.
+
+**Source:** ROM data at `023512bc`–`023512e3`
+
+#### Table Contents: Long Toss (0x02351214, 3 entries)
+
+All 3 entries are `0x00000000` / `0x00000000`. **No long toss class statuses have icons.**
+
+**Source:** ROM data at `02351214`–`0235122b`
+
+#### Table Contents: Invisible (0x023512e4, 5 entries)
+
+All 5 entries are `0x00000000` / `0x00000000`. **No invisible class statuses have icons.**
+
+**Source:** ROM data at `023512e4`–`0235130b`
+
+#### Table Contents: Blinker (0x0235126c, 5 entries)
+
+| Index | Enum | Cycling (0x218) | Icon Bit |
+|-------|------|-----------------|-----|
+| 0 | BLINKER_NONE | `0x00000000` | — |
+| 1 | BLINKER_BLINKER | `0x00100000` | bit 20: f_blinded |
+| 2 | BLINKER_CROSS_EYED | `0x00200000` | bit 21: f_cross_eyed |
+| 3 | BLINKER_EYEDROPS | `0x00400000` | bit 22: f_eyedrops |
+| 4 | BLINKER_DROPEYE | `0x00000000` | — (no icon) |
+
+All persistent bits are zero.
+
+**Source:** ROM data at `0235126c`–`02351293`
+
+#### Table Contents: Muzzled (0x023511bc, 2 entries)
+
+| Index | Enum | Cycling (0x218) | Icon Bit |
+|-------|------|-----------------|-----|
+| 0 | (false) | `0x00000000` | — |
+| 1 | (true) | `0x00800000` | bit 23: f_muzzled |
+
+**Source:** ROM data at `023511bc`–`023511cb`
+
+#### Table Contents: Miracle Eye (0x023511ec, 2 entries)
+
+| Index | Enum | Cycling (0x218) | Icon Bit |
+|-------|------|-----------------|-----|
+| 0 | (false) | `0x00000000` | — |
+| 1 | (true) | `0x20000000` | bit 29: f_miracle_eye |
+
+**Source:** ROM data at `023511ec`–`023511fb`
+
+#### Table Contents: Magnet Rise (0x023511cc, 2 entries)
+
+| Index | Enum | Cycling (0x218) | Icon Bit |
+|-------|------|-----------------|-----|
+| 0 | (false) | `0x00000000` | — |
+| 1 | (true) | `0x80000000` | bit 31: f_magnet_rise |
+
+**Source:** ROM data at `023511cc`–`023511db`
+
+#### Hardcoded Bits (not from tables)
+
+These are set by explicit checks in `UpdateStatusIconFlags`, not via the lookup tables:
+
+| Bit | Flag | Condition | Source |
+|-----|------|-----------|--------|
+| 13 | f_low_hp | `hp < max_hp / 4` (team members only) | Ghidra: `022e3d00`–`022e3d18` |
+| 13 | f_low_hp | `identify_orb_flag && has_held_item` | Ghidra: `022e3d18`–`022e3d28` |
+| 24 | f_grudge | `monster.grudge != 0` (offset 0xFD) | Ghidra: `022e3cc0`–`022e3ccc` |
+| 25 | f_exposed | `monster.exposed != 0` (offset 0xFE) | Ghidra: `022e3ccc`–`022e3cd8` |
+| 27 | f_lowered_stat | Any stat multiplier < 0x100 OR any stat stage < 10 | Ghidra: `022e3d28`–`022e3d80` |
+
+---
+
+### Stage 2: Icon Bit → SMA Animation Index + Palette
+
+The renderer `FUN_022dc820` (Ghidra: `022dc820`–`022dd088`) iterates set bits in
+`status_icon_flags`, and for each set bit uses it as an index into a table at `02350f8c`.
+Each entry is 8 bytes: `[u32 sma_animation_index, u32 palette_index]`.
+
+The SMA animation data is accessed via the structure pointer at `DAT_02353518`, offset `+0x6f4`.
+Each animation entry in the SMA header is 12 bytes (`0xC`), indexed by the animation index value.
+
+**Source:** ROM data at `02350f8c`–`0235109b`. Renderer disassembly at `022dcb34`–`022dcb60`.
+
+#### Icon Bit → SMA Rendering Table (32 cycling entries)
+
+| Bit | Flag | SMA Anim | Palette | Visual Description |
+|-----|------|----------|---------|-------------------|
+| 0 | f_sleepless | 0 (null) | 0 | Blue eye blinking yellow |
+| 1 | f_burn | 1 | 0 | Red flame |
+| 2 | f_poison | 2 | 0 | White skull |
+| 3 | f_toxic | 3 | 11 | Purple skull |
+| 4 | f_confused | 3 | 7 | Yellow birds (same shape as toxic, different palette) |
+| 5 | f_cowering | 5 | 0 | 2 green lines in circle |
+| 6 | f_taunt | 6 | 0 | Fist icon |
+| 7 | f_encore | 7 | 0 | Blue exclamation mark |
+| 8 | f_reflect | 8 | 0 | Blue shield with white sparks |
+| 9 | f_safeguard | 9 | 0 | Pink shield |
+| 10 | f_light_screen | 9 | 4 | Golden shield (same shape as safeguard, different palette) |
+| 11 | f_protect | 9 | 3 | Green shield |
+| 12 | f_endure | 9 | 10 | Blue shield with red sparks |
+| 13 | f_low_hp | 9 | 5 | Blue exclamation mark (same as encore visual) |
+| 14 | f_curse | 8 | 0 | Red skull (shares anim with reflect) |
+| 15 | f_embargo | 3 | 6 | Yellow exclamation mark |
+| 16 | f_sure_shot | 8 | 3 | Blue sword blinking yellow |
+| 17 | f_whiffer | 11 | 0 | 2 green lines in circle |
+| 18 | f_set_damage | 6 | 10 | Blue sword blinking red |
+| 19 | f_focus_energy | 11 | 5 | Red sword blinking yellow |
+| 20 | f_blinded | 11 | 4 | Blue eye with an X |
+| 21 | f_cross_eyed | 12 | 0 | Blue question mark |
+| 22 | f_eyedrops | 13 | 0 | Blue eye blinking yellow with wave |
+| 23 | f_muzzled | 14 | 0 | Blinking red cross |
+| 24 | f_grudge | 15 | 0 | Purple shield |
+| 25 | f_exposed | 9 | 7 | Blue eye blinking red with wave |
+| 26 | f_sleep | 14 | 4 | Red Z's |
+| 27 | f_lowered_stat | 16 | 4 | Yellow arrow pointing down |
+| 28 | f_heal_block | 10 | 3 | Blinking green cross |
+| 29 | f_miracle_eye | 15 | 3 | Blinking orange cross |
+| 30 | f_red_exclamation | 15 | 4 | Probably unused |
+| 31 | f_magnet_rise | 8 | 4 | Purple arrow pointing up |
+
+**Source:** ROM data at `02350f8c`–`0235108b` (32 entries × 8 bytes)
+
+#### Additional Entries (after cycling table, likely for persistent freeze icon)
+
+| Offset | SMA Anim | Palette | Likely Purpose |
+|--------|----------|---------|---------------|
+| `0235108c` | 10 | 7 | Freeze icon candidate |
+| `02351094` | 4 | 0 | Freeze ice block (4×4 anim) |
+
+**Source:** ROM data at `0235108c`–`0235109b`
+
+#### SMA Animation Reuse Summary
+
+Many icons share the same SMA animation shape but use different palettes for color variation:
+
+| SMA Anim | Shape | Used By (bit: palette) |
+|----------|-------|----------------------|
+| 3 | 2×2, 16fr skull/bird shape | toxic(3:11), confused(4:7), embargo(15:6) |
+| 8 | 1×2, 8fr vertical shape | reflect(8:0), curse(14:0), sure_shot(16:3), magnet_rise(31:4) |
+| 9 | 2×2, 13fr shield shape | safeguard(9:0), light_screen(10:4), protect(11:3), endure(12:10), low_hp(13:5), exposed(25:7) |
+| 11 | 2×2, 13fr circle/lines shape | whiffer(17:0), focus_energy(19:5), blinded(20:4) |
+| 14 | 1×1, 14fr small blinking | muzzled(23:0), sleep(26:4) |
+| 15 | 2×2, 8fr shield shape | grudge(24:0), miracle_eye(29:3), red_exclamation(30:4) |
+
+---
+
+### Stage 3: SMA Loader
+
+`FUN_022dd5b4` (Ghidra: `022dd5b4`) loads `SYSTEM/manpu_su.sma` into memory.
+
+- String reference: `"rom0:SYSTEM/manpu_su.sma"` at `0235109c`
+- Data structure pointer: `DAT_02353518`
+- SMA data stored at offset `+0x6f4` within the structure
+- 16 palettes loaded in a loop (indices 0–15)
+- `FUN_022dd518` called for animation indices 1–16 (sets up each animation's rendering data)
+
+**Source:** Ghidra decompilation of `FUN_022dd5b4`. String XREF at `022dd5ec`.
+
+---
+
+## status_icon_flags Bitfield Reference
+
+From `headers/types/dungeon_mode/dungeon_mode.h` in pmdsky-debug:
+
+```c
+struct status_icon_flags {
+    // Cycling icons (offset 0x218, first 4 bytes)
+    bool8 f_sleepless : 1;         // bit 0  - Blue eye blinking yellow
+    bool8 f_burn : 1;              // bit 1  - Red flame
+    bool8 f_poison : 1;            // bit 2  - White skull
+    bool8 f_toxic : 1;             // bit 3  - Purple skull
+    bool8 f_confused : 1;          // bit 4  - Yellow birds
+    bool8 f_cowering : 1;          // bit 5  - 2 green lines in circle
+    bool8 f_taunt : 1;             // bit 6  - Fist icon
+    bool8 f_encore : 1;            // bit 7  - Blue exclamation mark
+    bool8 f_reflect : 1;           // bit 8  - Blue shield with white sparks
+    bool8 f_safeguard : 1;         // bit 9  - Pink shield
+    bool8 f_light_screen : 1;      // bit 10 - Golden shield
+    bool8 f_protect : 1;           // bit 11 - Green shield
+    bool8 f_endure : 1;            // bit 12 - Blue shield with red sparks
+    bool8 f_low_hp : 1;            // bit 13 - Blue exclamation mark
+    bool8 f_curse : 1;             // bit 14 - Red skull
+    bool8 f_embargo : 1;           // bit 15 - Yellow exclamation mark
+    bool8 f_sure_shot : 1;         // bit 16 - Blue sword blinking yellow
+    bool8 f_whiffer : 1;           // bit 17 - 2 green lines in circle
+    bool8 f_set_damage : 1;        // bit 18 - Blue sword blinking red
+    bool8 f_focus_energy : 1;      // bit 19 - Red sword blinking yellow
+    bool8 f_blinded : 1;           // bit 20 - Blue eye with an X
+    bool8 f_cross_eyed : 1;        // bit 21 - Blue question mark
+    bool8 f_eyedrops : 1;          // bit 22 - Blue eye with circular wave
+    bool8 f_muzzled : 1;           // bit 23 - Blinking red cross
+    bool8 f_grudge : 1;            // bit 24 - Purple shield
+    bool8 f_exposed : 1;           // bit 25 - Blue eye blinking red with wave
+    bool8 f_sleep : 1;             // bit 26 - Red Z's
+    bool8 f_lowered_stat : 1;      // bit 27 - Yellow arrow pointing down
+    bool8 f_heal_block : 1;        // bit 28 - Blinking green cross
+    bool8 f_miracle_eye : 1;       // bit 29 - Blinking orange cross
+    bool8 f_red_exclamation : 1;   // bit 30 - Probably unused
+    bool8 f_magnet_rise : 1;       // bit 31 - Purple arrow pointing up
+
+    // Persistent icons (offset 0x21C, second 4 bytes)
+    bool8 f_freeze : 1;            // bit 0  - Ice block (always shown, not cycling)
+    // remaining bits appear unused
+};
+```
+
+**Source:** pmdsky-debug `headers/types/dungeon_mode/dungeon_mode.h`, struct `status_icon_flags`
+
+---
+
 ## Open Questions
 
-- Which palette index is the "correct" one used by the game at runtime?
-- What maps status condition enum values to SMA animation indices?
-  - Likely hardcoded in `overlay_0029.bin` (dungeon status logic) or `overlay_0010.bin`
-  - `"Debug Strings (Status)"` string block (NA indices 15971–16051) may name the status IDs
-- How are icons rendered in dungeon mode?
-  - Possibly a separate UI rendering path, NOT the 32-slot effect pool (`FUN_022bf764`)
-  - Or a looping effect spawned per entity with `loop_flag=1` when status is applied
 - What is `manpu_ma.sma`? No image data, purpose unknown.
-- Do buff/debuff stat changes use this same SMA file or a different source?
+- The persistent freeze icon rendering path (`022dcfac` region) may use a slightly different
+  lookup mechanism — needs confirmation of which SMA anim/palette the freeze icon uses at runtime.
+- Do buff/debuff stat changes use additional visual effects beyond the `f_lowered_stat` icon?
+  (The `Play*StatEffect` functions in `move_orb_effects.c` suggest separate VFX for stat changes.)
+- The `f_sleepless` icon (bit 0) maps to SMA anim 0 (null entry) — this may mean sleepless has
+  no overhead icon, or there's a special-case rendering path.
 
 ## Breadcrumbs
 
-- `overlay_0010.bin` — dungeon HUD/display overlay, likely candidate for icon rendering
-- `overlay_0029.bin` — status condition application logic, likely candidate for ID→index mapping
-- pmdsky-debug `symbols/na/overlay10.yml` — search for any "status", "icon", or "manpu" symbols
-- `"Status Names and Descriptions"` string block (NA 13554–13760) — ~103 status conditions;
-  count vs 17 non-null SMA entries suggests many statuses share icons or have no icon
+- `FUN_022dc820` — main status icon renderer, contains the cycling icon draw loop
+- `FUN_022dd5b4` — SMA file loader
+- `FUN_022dd518` — per-animation setup function called during load
+- `DAT_02353518` — pointer to status icon data structure at runtime
+- `02350f8c` — icon bit → SMA animation/palette lookup table (32×8 bytes)
+- `023511bc`–`02351583` — status → icon bit lookup tables (15 tables)
+- `overlay_0029.bin` — all of the above code lives in overlay 29
+- Two-turn move animations — separate system via `bide_class_status` + `two_turn_move_invincible`
+  flag at monster offset 0x10B (graphical flag, not icon-based). Documented for future research.
