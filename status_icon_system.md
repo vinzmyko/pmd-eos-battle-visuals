@@ -302,8 +302,10 @@ These are set by explicit checks in `UpdateStatusIconFlags`, not via the lookup 
 ### Stage 2: Icon Bit → SMA Animation Index + Palette
 
 The renderer `FUN_022dc820` (Ghidra: `022dc820`–`022dd088`) iterates set bits in
-`status_icon_flags`, and for each set bit uses it as an index into a table at `02350f8c`.
+`status_icon_flags`, and for each set bit calls `FUN_022dc7e4` which returns
+`bit_position + 1`. This value is used as an index into a table at `02350f8c`.
 Each entry is 8 bytes: `[u32 sma_animation_index, u32 palette_index]`.
+Entry 0 in the table is unused padding — bit N reads table[N+1].
 
 The SMA animation data is accessed via the structure pointer at `DAT_02353518`, offset `+0x6f4`.
 Each animation entry in the SMA header is 12 bytes (`0xC`), indexed by the animation index value.
@@ -312,51 +314,51 @@ Each animation entry in the SMA header is 12 bytes (`0xC`), indexed by the anima
 
 #### Icon Bit → SMA Rendering Table (32 cycling entries)
 
-| Bit | Flag | SMA Anim | Palette | Visual Description |
+| Bit | Table Index | Flag | SMA Anim | Palette | Visual Description |
 |-----|------|----------|---------|-------------------|
-| 0 | f_sleepless | 0 (null) | 0 | Blue eye blinking yellow |
-| 1 | f_burn | 1 | 0 | Red flame |
-| 2 | f_poison | 2 | 0 | White skull |
-| 3 | f_toxic | 3 | 11 | Purple skull |
-| 4 | f_confused | 3 | 7 | Yellow birds (same shape as toxic, different palette) |
-| 5 | f_cowering | 5 | 0 | 2 green lines in circle |
-| 6 | f_taunt | 6 | 0 | Fist icon |
-| 7 | f_encore | 7 | 0 | Blue exclamation mark |
-| 8 | f_reflect | 8 | 0 | Blue shield with white sparks |
-| 9 | f_safeguard | 9 | 0 | Pink shield |
-| 10 | f_light_screen | 9 | 4 | Golden shield (same shape as safeguard, different palette) |
-| 11 | f_protect | 9 | 3 | Green shield |
-| 12 | f_endure | 9 | 10 | Blue shield with red sparks |
-| 13 | f_low_hp | 9 | 5 | Blue exclamation mark (same as encore visual) |
-| 14 | f_curse | 8 | 0 | Red skull (shares anim with reflect) |
-| 15 | f_embargo | 3 | 6 | Yellow exclamation mark |
-| 16 | f_sure_shot | 8 | 3 | Blue sword blinking yellow |
-| 17 | f_whiffer | 11 | 0 | 2 green lines in circle |
-| 18 | f_set_damage | 6 | 10 | Blue sword blinking red |
-| 19 | f_focus_energy | 11 | 5 | Red sword blinking yellow |
-| 20 | f_blinded | 11 | 4 | Blue eye with an X |
-| 21 | f_cross_eyed | 12 | 0 | Blue question mark |
-| 22 | f_eyedrops | 13 | 0 | Blue eye blinking yellow with wave |
-| 23 | f_muzzled | 14 | 0 | Blinking red cross |
-| 24 | f_grudge | 15 | 0 | Purple shield |
-| 25 | f_exposed | 9 | 7 | Blue eye blinking red with wave |
-| 26 | f_sleep | 14 | 4 | Red Z's |
-| 27 | f_lowered_stat | 16 | 4 | Yellow arrow pointing down |
-| 28 | f_heal_block | 10 | 3 | Blinking green cross |
-| 29 | f_miracle_eye | 15 | 3 | Blinking orange cross |
-| 30 | f_red_exclamation | 15 | 4 | Probably unused |
-| 31 | f_magnet_rise | 8 | 4 | Purple arrow pointing up |
+| 0 | 1 | f_sleepless | 1 | 0 | Tiny eye (8×8) |
+| 1 | 2 | f_burn | 2 | 0 | Red flame |
+| 2 | 3 | f_poison | 3 | 11 | White skull |
+| 3 | 4 | f_toxic | 3 | 7 | Purple skull |
+| 4 | 5 | f_confused | 5 | 0 | Yellow birds |
+| 5 | 6 | f_cowering | 6 | 0 | Circular swirls |
+| 6 | 7 | f_taunt | 7 | 0 | Fist icon |
+| 7 | 8 | f_encore | 8 | 0 | Vertical exclamation shape |
+| 8 | 9 | f_reflect | 9 | 0 | Shield |
+| 9 | 10 | f_safeguard | 9 | 4 | Shield (palette 4) |
+| 10 | 11 | f_light_screen | 9 | 3 | Shield (palette 3) |
+| 11 | 12 | f_protect | 9 | 10 | Shield (palette 10) |
+| 12 | 13 | f_endure | 9 | 5 | Shield (palette 5) |
+| 13 | 14 | f_low_hp | 8 | 0 | Vertical exclamation shape (same as encore) |
+| 14 | 15 | f_curse | 3 | 6 | Skull (palette 6) |
+| 15 | 16 | f_embargo | 8 | 3 | Vertical shape (palette 3) |
+| 16 | 17 | f_sure_shot | 11 | 0 | Sword |
+| 17 | 18 | f_whiffer | 6 | 10 | Circular swirls (palette 10) |
+| 18 | 19 | f_set_damage | 11 | 5 | Sword (palette 5) |
+| 19 | 20 | f_focus_energy | 11 | 4 | Sword (palette 4) |
+| 20 | 21 | f_blinded | 12 | 0 | Tiny blinking (8×8) |
+| 21 | 22 | f_cross_eyed | 13 | 0 | Question marks |
+| 22 | 23 | f_eyedrops | 14 | 0 | Small blinking (8×8) |
+| 23 | 24 | f_muzzled | 15 | 0 | Cross/X shapes |
+| 24 | 25 | f_grudge | 9 | 7 | Shield (palette 7) |
+| 25 | 26 | f_exposed | 14 | 4 | Small blinking (palette 4) |
+| 26 | 27 | f_sleep | 16 | 4 | Z's |
+| 27 | 28 | f_lowered_stat | 10 | 3 | Down arrows (palette 3) |
+| 28 | 29 | f_heal_block | 15 | 3 | Cross/X shapes (palette 3) |
+| 29 | 30 | f_miracle_eye | 15 | 4 | Cross/X shapes (palette 4) |
+| 30 | 31 | f_red_exclamation | 8 | 4 | Vertical shape (palette 4) — probably unused |
+| 31 | 32 | f_magnet_rise | 10 | 7 | Down arrows (palette 7) |
 
 **Source:** ROM data at `02350f8c`–`0235108b` (32 entries × 8 bytes)
 
-#### Additional Entries (after cycling table, likely for persistent freeze icon)
+#### Additional Entries (persistent icons, after the 32 cycling entries)
 
-| Offset | SMA Anim | Palette | Likely Purpose |
-|--------|----------|---------|---------------|
-| `0235108c` | 10 | 7 | Freeze icon candidate |
-| `02351094` | 4 | 0 | Freeze ice block (4×4 anim) |
+| Table Index | Offset | SMA Anim | Palette | Purpose |
+|-------------|--------|----------|---------|---------|
+| 32 | `0235108c` | 10 | 7 | Unknown — down arrows palette 7 |
+| 33 | `02351094` | 4 | 0 | **Freeze ice block (confirmed)** — 4×4 (32×32px), 6 frames, rendered persistently over frozen monster |
 
-**Source:** ROM data at `0235108c`–`0235109b`
+**Source:** ROM data at `0235108c`–`0235109b`. Freeze confirmed visually from extracted sprite sheet.
 
 #### SMA Animation Reuse Summary
 
@@ -364,12 +366,15 @@ Many icons share the same SMA animation shape but use different palettes for col
 
 | SMA Anim | Shape | Used By (bit: palette) |
 |----------|-------|----------------------|
-| 3 | 2×2, 16fr skull/bird shape | toxic(3:11), confused(4:7), embargo(15:6) |
-| 8 | 1×2, 8fr vertical shape | reflect(8:0), curse(14:0), sure_shot(16:3), magnet_rise(31:4) |
-| 9 | 2×2, 13fr shield shape | safeguard(9:0), light_screen(10:4), protect(11:3), endure(12:10), low_hp(13:5), exposed(25:7) |
-| 11 | 2×2, 13fr circle/lines shape | whiffer(17:0), focus_energy(19:5), blinded(20:4) |
-| 14 | 1×1, 14fr small blinking | muzzled(23:0), sleep(26:4) |
-| 15 | 2×2, 8fr shield shape | grudge(24:0), miracle_eye(29:3), red_exclamation(30:4) |
+| 3 | 2×2, 16fr skull shape | poison(2:11), toxic(3:7), curse(14:6) |
+| 6 | 2×2, 9fr swirl shape | cowering(5:0), whiffer(17:10) |
+| 8 | 1×2, 8fr vertical shape | encore(7:0), low_hp(13:0), embargo(15:3), red_exclamation(30:4) |
+| 9 | 2×2, 13fr shield shape | reflect(8:0), safeguard(9:4), light_screen(10:3), protect(11:10), endure(12:5), grudge(24:7) |
+| 10 | 2×2, 10fr arrow shape | lowered_stat(27:3), magnet_rise(31:7) |
+| 11 | 2×2, 13fr sword shape | sure_shot(16:0), set_damage(18:5), focus_energy(19:4) |
+| 14 | 1×1, 14fr small blinking | eyedrops(22:0), exposed(25:4) |
+| 15 | 2×2, 8fr cross/X shape | muzzled(23:0), heal_block(28:3), miracle_eye(29:4) |
+| 16 | 2×2, 10fr Z shape | sleep(26:4) |
 
 ---
 
@@ -444,8 +449,8 @@ struct status_icon_flags {
   lookup mechanism — needs confirmation of which SMA anim/palette the freeze icon uses at runtime.
 - Do buff/debuff stat changes use additional visual effects beyond the `f_lowered_stat` icon?
   (The `Play*StatEffect` functions in `move_orb_effects.c` suggest separate VFX for stat changes.)
-- The `f_sleepless` icon (bit 0) maps to SMA anim 0 (null entry) — this may mean sleepless has
-  no overhead icon, or there's a special-case rendering path.
+- The `f_sleepless` icon (bit 0) maps to SMA anim 1 (tiny 8×8 eye) via table[1]. Previously
+  thought to be null — resolved by the bit+1 indexing discovery.
 
 ## Breadcrumbs
 

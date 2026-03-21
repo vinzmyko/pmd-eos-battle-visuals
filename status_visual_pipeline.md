@@ -355,37 +355,37 @@ For quick reference, here is every status that has ANY visual component, with al
 
 | Status | Apply Effect | Apply Sound | Persistent Icon | Tick Damage | Expire Anim |
 |--------|-------------|-------------|-----------------|-------------|-------------|
-| Sleep | — | — | SMA 14:pal4 (red Z's) | — | WAN anim 8 |
-| Sleepless | — | — | SMA 0 (null?) | — | — |
-| Nightmare | — | — | SMA 14:pal4 (red Z's) | damage via EndSleepClass | WAN anim 8 |
-| Napping | — | — | SMA 14:pal4 (red Z's) | heals HP | WAN anim 8 |
-| Burn | effect `0x4C` | — | SMA 1:pal0 (flame) | `DAMAGE_MESSAGE_BURN` | — |
-| Poisoned | effect `0x13A` | — | SMA 2:pal0 (white skull) | `DAMAGE_MESSAGE_POISON` | — |
-| Badly Poisoned | effect `0x13A` | — | SMA 3:pal11 (purple skull) | `DAMAGE_MESSAGE_POISON` (escalating) | — |
+| Sleep | — | — | SMA 16:pal4 (Z's) | — | WAN anim 8 |
+| Sleepless | — | — | SMA 1:pal0 (tiny eye) | — | — |
+| Nightmare | — | — | SMA 16:pal4 (Z's) | damage via EndSleepClass | WAN anim 8 |
+| Napping | — | — | SMA 16:pal4 (Z's) | heals HP | WAN anim 8 |
+| Burn | effect `0x4C` | — | SMA 2:pal0 (flame) | `DAMAGE_MESSAGE_BURN` | — |
+| Poisoned | effect `0x13A` | — | SMA 3:pal11 (white skull) | `DAMAGE_MESSAGE_POISON` | — |
+| Badly Poisoned | effect `0x13A` | — | SMA 3:pal7 (purple skull) | `DAMAGE_MESSAGE_POISON` (escalating) | — |
 | Paralysis | effect `0x1A7` | — | **none** | — | — |
 | Frozen | effect `0x15` | — | SMA (persistent, ice block) | — | — |
 | Cringe | effect `0x143` | — | **none** | — | — |
-| Confused | — | SE `0x310` | SMA 3:pal7 (birds) | — | — |
-| Cowering | WAN anim 10 | — | SMA 5:pal0 (green lines) | — | — |
-| Taunted | — | — | SMA 6:pal0 (fist) | — | — |
-| Encore | — | — | SMA 7:pal0 (blue !) | — | — |
-| Reflect | — | — | SMA 8:pal0 (blue shield) | — | — |
-| Safeguard | — | — | SMA 9:pal0 (pink shield) | — | — |
-| Light Screen | — | — | SMA 9:pal4 (gold shield) | — | — |
-| Protect | — | — | SMA 9:pal3 (green shield) | — | — |
-| Endure | — | — | SMA 9:pal10 (blue+red shield) | — | — |
-| Curse | — | — | SMA 8:pal0 | `DAMAGE_MESSAGE_CURSE` (max_hp/4) | — |
-| Embargo/Snatch/Gastro Acid | — | — | SMA 3:pal6 (yellow !) | — | — |
-| Heal Block | — | — | SMA 10:pal3 (green cross) | — | — |
-| Sure Shot | effect `0x05` | — | SMA 8:pal3 (blue sword) | — | — |
-| Whiffer | — | SE `0x227` | SMA 11:pal0 (green lines) | — | — |
-| Focus Energy | — | — | SMA 11:pal5 (red sword) | — | — |
-| Blinker | effect `0x41` | — | SMA 11:pal4 (eye X) | — | — |
-| Cross-Eyed | — | — | SMA 12:pal0 (blue ?) | — | — |
-| Eyedrops | — | — | SMA 13:pal0 (eye+wave) | — | — |
-| Muzzled | — | — | SMA 14:pal0 (red cross) | — | — |
-| Miracle Eye | — | — | SMA 15:pal3 (orange cross) | — | — |
-| Magnet Rise | — | — | SMA 8:pal4 (purple arrow up) | — | — |
+| Confused | — | SE `0x310` | SMA 5:pal0 (birds) | — | — |
+| Cowering | WAN anim 10 | — | SMA 6:pal0 (swirls) | — | — |
+| Taunted | — | — | SMA 7:pal0 (fist) | — | — |
+| Encore | — | — | SMA 8:pal0 (vertical exclamation) | — | — |
+| Reflect | — | — | SMA 9:pal0 (shield) | — | — |
+| Safeguard | — | — | SMA 9:pal4 (shield) | — | — |
+| Light Screen | — | — | SMA 9:pal3 (shield) | — | — |
+| Protect | — | — | SMA 9:pal10 (shield) | — | — |
+| Endure | — | — | SMA 9:pal5 (shield) | — | — |
+| Curse | — | — | SMA 3:pal6 (skull) | `DAMAGE_MESSAGE_CURSE` (max_hp/4) | — |
+| Embargo/Snatch/Gastro Acid | — | — | SMA 8:pal3 (vertical shape) | — | — |
+| Heal Block | — | — | SMA 15:pal3 (cross/X) | — | — |
+| Sure Shot | effect `0x05` | — | SMA 11:pal0 (sword) | — | — |
+| Whiffer | — | SE `0x227` | SMA 6:pal10 (swirls) | — | — |
+| Focus Energy | — | — | SMA 11:pal4 (sword) | — | — |
+| Blinker | effect `0x41` | — | SMA 12:pal0 (tiny blinking 8×8) | — | — |
+| Cross-Eyed | — | — | SMA 13:pal0 (question marks) | — | — |
+| Eyedrops | — | — | SMA 14:pal0 (small blinking) | — | — |
+| Muzzled | — | — | SMA 15:pal0 (cross/X) | — | — |
+| Miracle Eye | — | — | SMA 15:pal4 (cross/X) | — | — |
+| Magnet Rise | — | — | SMA 10:pal7 (arrows) | — | — |
 | Constriction | — | — | **none** | `DAMAGE_MESSAGE_CONSTRICTION` + effect anim from offset 0xC8 | — |
 | Wrap (attacker) | — | — | **none** | `DAMAGE_MESSAGE_WRAP` | — |
 | Wrapped (defender) | — | — | **none** | heals HP (Ingrain-like) | — |
@@ -393,10 +393,10 @@ For quick reference, here is every status that has ANY visual component, with al
 | Perish Song | — | — | **none** | 999 damage when counter reaches 0 | — |
 | Speed Up | effect `0x18B` | — | (via lowered_stat icon if applicable) | — | — |
 | Speed Down | effect `0x18A` | — | (via lowered_stat icon if applicable) | — | — |
-| Low HP | — | — | SMA 9:pal5 (blue !) | — (hardcoded check: hp < max/4) | — |
-| Lowered Stat | — | — | SMA 16:pal4 (yellow arrow down) | — (hardcoded check: any stat below default) | — |
-| Grudge | — | — | SMA 15:pal0 (purple shield) | — | — |
-| Exposed | — | — | SMA 9:pal7 (eye+wave) | — | — |
+| Low HP | — | — | SMA 8:pal0 (vertical exclamation) | — (hardcoded check: hp < max/4) | — |
+| Lowered Stat | — | — | SMA 10:pal3 (down arrows) | — (hardcoded check: any stat below default) | — |
+| Grudge | — | — | SMA 9:pal7 (shield) | — | — |
+| Exposed | — | — | SMA 14:pal4 (small blinking) | — | — |
 
 ---
 
