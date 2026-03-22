@@ -391,7 +391,133 @@ Many icons share the same SMA animation shape but use different palettes for col
 **Source:** Ghidra decompilation of `FUN_022dd5b4`. String XREF at `022dd5ec`.
 
 ---
+### Stage 4: Rendering & Positioning
 
+#### Icon Rendering State Struct (0x50 bytes per monster)
+
+22 (0x16) slots are allocated at `*DAT_022dda50 + 4`, one per visible dungeon entity.
+Each slot is 0x50 bytes. The base pointer is also accessible via `DAT_022dd08c` and `DAT_022dc7e0`.
+
+`FUN_022dc78c` looks up a slot by matching `unique_id` at offset +0x08.
+
+| Offset | Size | Writer | Content |
+|--------|------|--------|---------|
+| +0x00 | 1 | — | Active flag (nonzero = slot in use) |
+| +0x08 | 2 | FUN_022dd7d8 | `apparent_id` (species sprite index) |
+| +0x0C | 4 | FUN_022dd7d8 | `status_icon_flags` low (cycling bitfield, from monster +0x218) |
+| +0x10 | 4 | FUN_022dd7d8 | `status_icon_flags` high (persistent bitfield, from monster +0x21C) |
+| +0x14 | 1 | FUN_022dd7d8 | Visibility flag |
+| +0x15 | 1 | FUN_022ddb98 | Display mode flag |
+| +0x16 | 2 | FUN_022ddb98 | Entity pixel_x >> 8 |
+| +0x18 | 2 | FUN_022ddb98 | Entity pixel_y >> 8 (elevation-adjusted) |
+| +0x1A | 2 | FUN_022ddb98 | Head attachment X (sprite-relative, per-frame) |
+| +0x1C | 2 | FUN_022ddb98 | Head attachment Y (sprite-relative, per-frame) |
+| +0x1E | 2 | FUN_022ddb98 | Centre attachment X (sprite-relative, per-frame) |
+| +0x20 | 2 | FUN_022ddb98 | Centre attachment Y (sprite-relative, per-frame) |
+| +0x2C | 12 | FUN_022dc820 | Cycling icon state: {bits_lo(4), bits_hi(4), countdown_timer(4)} |
+| +0x38 | 12 | FUN_022dc820 | Persistent icon state: same layout, param_2=1 |
+| +0x44 | 1 | FUN_022dd7d8 / FUN_022dd8b4 | Dirty flag (cleared after render) |
+| +0x46 | 2 | FUN_02303f18 | Screen offset X |
+| +0x48 | 2 | FUN_02303f18 | Screen offset Y |
+| +0x4A | 2 | FUN_02303f18 | Z-priority related |
+
+#### Per-Frame Data Flow
+```
+FUN_02303f18 (per entity, each frame)
+  │
+  ├── Computes pixel_pos, screen offsets, animation state
+  │
+  ├── FUN_0201d034(asStack_30, 4, anim_ctrl)
+  │     Reads all 4 WAN attachment points for current frame:
+  │       [0] = Head.x/y    [1] = LeftHand.x/y
+  │       [2] = RightHand.x/y   [3] = Centre.x/y
+  │
+  ├── FUN_022ddb98(unique_id, &pixel_pos, asStack_30, flag)
+  │     Writes pixel position + Head + Centre into icon struct
+  │
+  ├── FUN_022e3a40(&local_48, entity)
+  │     Copies monster->info+0x218/0x21C into local vars
+  │
+  └── FUN_022dd7d8(unique_id, apparent_id, flags_lo, flags_hi, visible)
+        Writes status flags + visibility into icon struct
+```
+```
+FUN_022dd8b4 (renderer, each frame — called via function pointer)
+  │
+  ├── FUN_022dd518 × 4: SMA palette animation tick (4 anims per quarter-frame)
+  │
+  └── For each of 22 slots:
+        FUN_022dc820(slot, 0, camera)   → cycling icons
+        FUN_022dc820(slot, 1, camera)   → persistent icons
+```
+
+#### Icon Positioning Formula
+
+The position is computed in `FUN_022dd0a4`, called from within `FUN_022dc820`.
+
+**Cycling icons** (all statuses except freeze) use the **Head** attachment point:
+```
+screen_x = pixel_x + head_x - (sma_width_blocks * 4) - camera_x
+screen_y = pixel_y + head_y - (sma_height_blocks * 4) - camera_y - 16
+```
+
+**Freeze icon** (persistent, SMA anim 4) uses the **Centre** attachment point:
+```
+screen_x = pixel_x + centre_x - (sma_width_blocks * 4) - camera_x
+screen_y = pixel_y + centre_y - (sma_height_blocks * 4) - camera_y
+```
+
+Where:
+- `pixel_x/y` = entity pixel position >> 8, with Y adjusted for elevation
+- `head_x/y` and `centre_x/y` = WAN attachment point offsets for the current animation frame (includes sprite origin offset from `anim_ctrl[0x10]/[0x11]`)
+- `sma_width_blocks` / `sma_height_blocks` = from the SMA animation header (1 block = 8 pixels)
+- The `- blocks * 4` centers the icon on the attachment point
+- The `-16` pushes cycling icons above the head
+
+**Bounds clipping:** Icons are culled if `screen_x < -32` or `screen_x >= 255` or the combined Y is out of range `[0, 192)` (NDS screen bounds with margin).
+
+#### Icon Cycling Behavior
+
+**Per-monster, not synchronized.** Each monster has independent cycling state in its 0x50-byte slot at offsets +0x2C (cycling) and +0x38 (persistent).
+
+**Timer:** Each active icon displays for **60 frames** (0x3C). At ~60fps this is approximately **1 second per icon**. When the timer reaches 0, the renderer scans forward through the `status_icon_flags` bitfield to find the next set bit, wrapping around if needed, and resets the timer to 60.
+
+**Bit rotation:** The current icon is stored as a single-bit mask (bits_lo/bits_hi). On each cycle, it shifts left by 1. If it overflows past the highest valid bit, it wraps to bit 0 (cycling) or bit 0 of the persistent field. The first set bit found after rotation becomes the next displayed icon.
+
+**If all icon bits are cleared** (status cured), both bits_lo and bits_hi are set to 0 and the timer is reset to 0. The icon disappears immediately.
+
+**Persistent icons** (freeze) do not participate in cycling rotation. They are always displayed via the `param_2=1` path.
+
+#### SMA Animation Header Access
+
+The SMA data is at `*(DAT_022dd08c + 0x6F4)`. Each animation entry is **12 bytes** (0xC), accessed as:
+```
+entry = *(sma_data + 4) + anim_index * 0xC
+  byte  [0]   = width_blocks
+  byte  [1]   = height_blocks
+  int32 [4]   = image data offset
+  int16 [8]   = frame count (used for palette animation division)
+  int16 [10]  = palette base index
+```
+
+#### Functions Used
+
+| Function | Address (NA) | Purpose |
+|----------|--------------|---------|
+| `FUN_022dd8b4` | `0x022dd8b4` | Top-level icon renderer (called via function pointer) |
+| `FUN_022dc820` | `0x022dc820` | Per-slot icon tick + render |
+| `FUN_022dd0a4` | `0x022dd0a4` | Icon OAM write (computes final screen position) |
+| `FUN_022dc7e4` | `0x022dc7e4` | Bit position finder (returns highest set bit index + 1) |
+| `FUN_022dc78c` | `0x022dc78c` | Slot lookup by unique_id |
+| `FUN_022ddb98` | `0x022ddb98` | Writes pixel position + attachment points into icon struct |
+| `FUN_022dd7d8` | `0x022dd7d8` | Writes status flags + visibility into icon struct |
+| `FUN_022e3a40` | `0x022e3a40` | Copies status_icon_flags from monster struct |
+| `FUN_0201d034` | `0x0201d034` | Reads all 4 WAN attachment points for current frame |
+| `FUN_022dd518` | `0x022dd518` | SMA palette animation setup per animation index |
+| `FUN_02303f18` | `0x02303f18` | Entity per-frame update (animation, position, icon data) |
+
+
+---
 ## status_icon_flags Bitfield Reference
 
 From `headers/types/dungeon_mode/dungeon_mode.h` in pmdsky-debug:

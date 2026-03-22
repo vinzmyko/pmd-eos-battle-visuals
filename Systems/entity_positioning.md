@@ -183,6 +183,12 @@ local_28 = (undefined2)((uint)param_1[3] >> 8);  // No attachment offset added
 local_26 = (undefined2)((uint)param_1[4] >> 8);
 ```
 
+### Attachment Points and Status Icons
+
+The Head (index 0) and Centre (index 3) attachment points are used to position overhead status icons. Cycling icons anchor to the Head point; the freeze overlay anchors to Centre. These offsets are read per-frame from the entity's WAN animation control, so icons track sprite animation movement.
+
+> See `status_icon_system.md` → Stage 4: Rendering & Positioning for the complete formula and icon struct layout.
+
 ## Helper Functions
 
 **Evidence:** `SetEntityPixelPosXY`

@@ -58,6 +58,33 @@ address range `022e4068`–`022e53f0`.
 **Source:** Ghidra disassembly of each function listed. Effect IDs read from DAT_ constants
 or hardcoded immediates in the ARM instructions.
 
+### Heal Effect Dispatch (TryIncreaseHp / TryRestoreHp)
+
+The two heal effects are dispatched through different code paths:
+
+**Effect `0x07` (7) — HP Restore** is played by `TryRestoreHp` (`022e4480`).
+This is the standard healing path used by the majority of heal sources.
+
+Callers of `TryRestoreHp`: `TryIncreaseHp` (fallback when no max HP boost applies),
+`DoMoveTag0x1A7` (move tag 0x1A7 — ends negative status + heals + restores PP).
+
+**Effect `0x171` (369) — HP Recovery** is played by `TryIncreaseHp` directly,
+but **only** when max HP is being boosted (the branch where `max_hp_boost > 0` and
+either `hp == max_hp` or `hp_restoration == 0`). When `TryIncreaseHp` performs a
+normal heal without max HP boost, it delegates to `TryRestoreHp` which plays effect 7.
+
+Callers of `TryIncreaseHp`: `EndSleepClassStatus`, `ApplyDamage`, `FUN_0230fc24`
+(per-turn tick handler), `ApplyAquaRingHealing`, `ApplyItemEffect`,
+`DoMoveMorningSun`, `DoMoveDamageDrain`, `DoMoveSynthesis`, `DoMoveRecoverHp`,
+`DoMoveAbsorb`, `DoMoveRecoverHpTeam`, `DoMoveMoonlight`, `DoMoveSwallow`,
+`DoMovePresent`, `DoMoveDreamEater`, `DoMoveHealingWish`, `DoMoveHealOrder`,
+`DoMoveRoost`, `DoMoveLunarDance`, `FUN_022fabc`, `FUN_02310c18`.
+
+**Summary:** Effect 7 is the general-purpose heal VFX. Effect 369 is the max HP boost VFX.
+
+**Source:** Ghidra XREF analysis of `FUN_022e4430` and `FUN_022e4480`.
+`TryIncreaseHp` at `022e4d44`. `TryRestoreHp` at `022e4f98`.
+
 ### Sound-Only Effects (no visual animation)
 
 | Status | Function | Sound Effect ID | Source Address |
