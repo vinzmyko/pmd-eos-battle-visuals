@@ -92,6 +92,50 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0x167 | uint8_t | flag | Related to move execution |
 | 0x170 | uint8_t | flag | Cleared for specific moves |
 | 0x23F | uint8_t | flag | Checked in move targeting |
+| 0xBD | uint8_t | sleep_class_status | Sleep class (0=none, 1=sleep, 2=sleepless, 3=nightmare, 4=yawning, 5=napping) |
+| 0xBE | uint8_t | sleep_counter | Duration counter for sleep class |
+| 0xBF | uint8_t | burn_class_status | Burn class (0=none, 1=burn, 2=poison, 3=badly_poisoned, 4=paralysis) |
+| 0xC0 | uint8_t | burn_duration_counter | Duration counter — ticked by TickStatusAndHealthRegen |
+| 0xC1 | uint8_t | burn_damage_countdown | Damage tick countdown — ticked by FUN_0230fc24 (burn/poison only) |
+| 0xC2 | uint8_t | toxic_tick_count | Badly poisoned escalation index (caps at 29) |
+| 0xC4 | uint8_t | freeze_class_status | Freeze class (0=none, 1=frozen, 3=shadow_hold, 4=wrap, 5=ingrain, 6=petrified, 7=constriction) |
+| 0xCC | uint8_t | freeze_counter | Duration counter for freeze class |
+| 0xCD | uint8_t | freeze_damage_countdown | Damage tick countdown (constriction/wrap) |
+| 0xD0 | uint8_t | cringe_class_status | Cringe class (0=none, 1=cringe, 2=confused, 3=paused, 4=cowering, 5=taunted, 6=encore, 7=infatuated) |
+| 0xD1 | uint8_t | cringe_counter | Duration counter for cringe class |
+| 0xD2 | uint8_t | bide_class_status | Bide/two-turn status |
+| 0xD3 | uint8_t | bide_counter | Duration counter for bide |
+| 0xD5 | uint8_t | reflect_class_status | Reflect class (see status_icon_system.md for enum) |
+| 0xD6 | uint8_t | reflect_counter | Duration counter for reflect class |
+| 0xD7 | uint8_t | aqua_ring_counter | Aqua Ring heal tick counter (reflect class value 0x10) |
+| 0xD8 | uint8_t | curse_class_status | Curse class (0=none, 1=cursed, 2=decoy, 3=snatch, 4=gastro_acid, 5=heal_block, 6=embargo) |
+| 0xDB | uint8_t | curse_counter | Duration counter for curse class |
+| 0xDC | uint8_t | curse_damage_countdown | Damage tick countdown (curse) |
+| 0xE0 | uint8_t | leech_seed_class_status | Leech seed class |
+| 0xE4 | int32_t | leech_seed_source_unique_id | Unique ID of the entity that applied leech seed |
+| 0xE8 | uint8_t | leech_seed_source_index | Entity pool index of leech seed source |
+| 0xE9 | uint8_t | leech_seed_counter | Duration counter for leech seed |
+| 0xEA | uint8_t | leech_seed_damage_countdown | Damage tick countdown (leech seed) |
+| 0xEC | uint8_t | sure_shot_class_status | Sure shot class |
+| 0xED | uint8_t | sure_shot_counter | Duration counter |
+| 0xEF | uint8_t | invisible_class_status | Invisible class |
+| 0xF0 | uint8_t | invisible_counter | Duration counter |
+| 0xF1 | uint8_t | blinker_class_status | Blinker class |
+| 0xF2 | uint8_t | blinker_counter | Duration counter |
+| 0xF3 | uint8_t | muzzled_status | Boolean |
+| 0xF4 | uint8_t | muzzled_counter | Duration counter |
+| 0xF5 | uint8_t | miracle_eye_status | Boolean |
+| 0xF6 | uint8_t | miracle_eye_counter | Duration counter |
+| 0xF7 | uint8_t | magnet_rise_status | Boolean |
+| 0xF8 | uint8_t | magnet_rise_counter | Duration counter |
+| 0x104 | uint8_t | run_away_status | Flee state (1=type A, 2=type B, logged differently) |
+| 0x105 | uint8_t | run_away_counter | Duration counter for flee |
+| 0x106 | uint8_t | perish_song_counter | Perish Song countdown |
+| 0x110 | int32_t | cached_speed_stage | Cached speed stage value, compared after counter expiry |
+| 0x114-0x118 | uint8_t[5] | stat_stage_counters | Speed/stat stage duration counters (set A) |
+| 0x119-0x11D | uint8_t[5] | stat_stage_counters_2 | Speed/stat stage duration counters (set B) |
+| 0x150 | uint8_t | hunger_damage_flag | Set to 1 when hunger damage dealt this turn |
+| 0x210 | int16_t | hp_regen_accumulator | HP regen fractional accumulator |
 
 ### Direction Values
 

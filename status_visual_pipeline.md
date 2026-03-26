@@ -184,6 +184,84 @@ adjacent IDs, and physical/special get different visuals. The stat stage and mul
 variants are visually identical.
 
 ---
+## Stage 1c: Action Blocking (MonsterCannotAttack)
+
+Some statuses completely prevent the monster from acting on its turn. This is checked by
+`MonsterCannotAttack` at the top of `ExecuteMonsterAction`, before any action processing.
+There is **no RNG roll** — if the status is active, the turn is unconditionally skipped.
+
+**Source:** Ghidra decompilation of `MonsterCannotAttack`.
+
+### Statuses That Block Action
+
+| Field | Value(s) | Status | Notes |
+|-------|----------|--------|-------|
+| 0xBD (sleep class) | != 0, 2, 4 | Sleep (1), Nightmare (3), Napping (5) | Skipped if `skip_sleep` param is true |
+| 0xC4 (freeze class) | 1 | Frozen | — |
+| 0xC4 (freeze class) | 3 | Shadow Hold | — |
+| 0xC4 (freeze class) | 4 | Wrap | — |
+| 0xC4 (freeze class) | 6 | Petrified | — |
+| 0xD0 (cringe class) | 1 | Cringe | — |
+| 0xD0 (cringe class) | 3 | Paused | — |
+| 0xD0 (cringe class) | 7 | Infatuated | — |
+| 0xBF (burn class) | 4 | **Paralysis** | Hard block, no RNG, no damage |
+
+### Statuses That Do NOT Block Action
+
+| Field | Value(s) | Status |
+|-------|----------|--------|
+| 0xBF | 1 | Burn |
+| 0xBF | 2 | Poison |
+| 0xBF | 3 | Badly Poisoned |
+| 0xBD | 2 | Sleepless |
+| 0xBD | 4 | Yawning |
+
+### Fallthrough: ShouldMonsterRunAway
+
+If none of the above statuses block, `MonsterCannotAttack` calls `ShouldMonsterRunAway`.
+This is NOT a status check — it returns true if:
+
+- `info + 0x104` is set AND `0x105` counter is nonzero (temporary flee state)
+- **Run Away** ability + HP below half max (wild enemies only, `info + 7 == 0`)
+- **"Get Away From Here"** tactic is set
+- **"Avoid Trouble"** tactic + HP at or below half max
+
+### Paralysis: Complete Mechanic
+
+PMD paralysis is a **double penalty** with no randomness:
+
+1. **Speed reduction** — one stage down at infliction (fewer fractional turns per round)
+2. **Hard action block** — `MonsterCannotAttack` returns true every turn while active
+3. **Duration counter** — `TickStatusAndHealthRegen` decrements `0xC0` each fractional turn; at 0, `EndBurnClassStatus` cures it
+
+No per-turn damage. No per-turn VFX. The monster sits idle on every turn it receives.
+
+### Turn Execution Flow
+```
+RunFractionalTurn
+  └─► per monster:
+        TickStatusAndHealthRegen(entity)    ← decrements ALL status duration counters
+        RunMonsterAi(entity)                ← decides action
+        ExecuteMonsterAction(entity)
+          ├─► MonsterCannotAttack(entity)   ← if true, turn skipped
+          └─► action switch (walk, use move, use item, etc.)
+              └─► FUN_0230fc24(entity)      ← per-turn damage ticks (burn, poison, etc.)
+```
+
+**Source:** `RunFractionalTurn` decompilation. `TickStatusAndHealthRegen` runs BEFORE
+`ExecuteMonsterAction`, so duration counters tick even on blocked turns.
+
+### Functions Used
+
+| Function | Address (NA) | Purpose |
+|----------|--------------|---------|
+| `MonsterCannotAttack` | — | Checks if status prevents action (no RNG) |
+| `ShouldMonsterRunAway` | — | Tactic/ability flee check (fallthrough) |
+| `ExecuteMonsterAction` | — | Main action dispatcher, calls MonsterCannotAttack |
+| `RunFractionalTurn` | — | Per-fractional-turn orchestrator |
+| `TickStatusAndHealthRegen` | — | Decrements all status duration counters |
+
+---
 
 ## Stage 2: Persistent Overhead Icons
 
@@ -246,7 +324,7 @@ decrement burn_damage_countdown
 
 | Status | Monster Field | Countdown Field | Countdown Reset | Damage | Damage Message | Damage Source | Notes |
 |--------|-------------|-----------------|-----------------|--------|---------------|---------------|-------|
-| Burn | 0xBF = 1 | 0xC1 | `DAT_02310aac` | `DAT_02310ab0` (fixed) | `DAMAGE_MESSAGE_BURN` (1) | `0x247` | — |
+| Burn | 0xBF = 1 | 0xC1 | `DAT_02310aac` | `DAT_02310ab0` (fixed) | `DAMAGE_MESSAGE_BURN` (1) | `0x247` | Two-counter system (see below) |
 | Poison | 0xBF = 2 | 0xC1 | `DAT_02310ac0` | `DAT_02310ac4` (fixed) | `DAMAGE_MESSAGE_POISON` (3) | `0x249` | Poison Heal ability reverses to HP recovery |
 | Badly Poisoned | 0xBF = 3 | 0xC1 | `DAT_02310ac8` | table at `DAT_02310acc` | `DAMAGE_MESSAGE_POISON` (3) | `0x249` | Escalating damage indexed by tick count (0xC2, caps at 29). Poison Heal reverses |
 | Constriction | 0xC4 = 7 | 0xCD | `DAT_02310ad0` | `DAT_02310ad4` (fixed) | `DAMAGE_MESSAGE_CONSTRICTION` (2) | `0x248` | **EXCEPTION:** plays `PlayEffectAnimationEntityStandard` with anim from offset 0xC8 BEFORE damage |
@@ -257,6 +335,25 @@ decrement burn_damage_countdown
 | Perish Song | 0x106 | counter | — | 999 (instant KO) | `DAMAGE_MESSAGE_PERISH_SONG` (11) | `0x24d` | If Protect (0xD5 = 7) is active, just logs a message instead |
 
 **Source:** All offsets and DAT_ references from Ghidra decompilation of `FUN_0230fc24`.
+
+### Burn Class: Two-Counter System
+
+Burn, poison, and badly poisoned have **two independent counters**:
+
+| Counter | Offset | Decremented By | Purpose |
+|---------|--------|----------------|---------|
+| **Duration** | 0xC0 | `TickStatusAndHealthRegen` (every fractional turn) | When 0 → `EndBurnClassStatus` → status cured |
+| **Damage tick** | 0xC1 | `FUN_0230fc24` (per-turn status tick) | When 0 → reset from DAT + deal damage |
+
+Duration counter (`0xC0`) controls how long the status lasts. Damage tick counter (`0xC1`)
+controls how frequently damage is dealt. These tick independently — the damage tick resets
+each time it fires, while the duration counter counts down to expiry.
+
+Paralysis (`0xBF = 4`) only uses the duration counter (`0xC0`). It has no damage tick —
+no entry in `FUN_0230fc24` deals damage for paralysis. Action is blocked by
+`MonsterCannotAttack` instead.
+
+**Source:** `TickStatusAndHealthRegen` for duration, `FUN_0230fc24` for damage ticks.
 
 ### Other Per-Turn Effects (same function)
 
@@ -356,7 +453,7 @@ Visual feedback relies on other cues:
 
 | Status | Application VFX | Ongoing Visual Cue |
 |--------|----------------|-------------------|
-| Paralysis | effect `0x1A7` + speed down effect `0x18A` | Monster moves slower (reduced speed stage) |
+| Paralysis | effect `0x1A7` + speed down effect `0x18A` | Monster moves slower (speed stage -1) AND cannot act at all (hard block via `MonsterCannotAttack`, no RNG) |
 | Cringe/Flinch | effect `0x143` (exclamation) | Short duration — expires before next turn |
 | Infatuated | — (no application VFX found) | No visual cue |
 | Paused | — (no-op) | No visual cue |
@@ -389,7 +486,7 @@ For quick reference, here is every status that has ANY visual component, with al
 | Burn | effect `0x4C` | — | SMA 2:pal0 (flame) | `DAMAGE_MESSAGE_BURN` | — |
 | Poisoned | effect `0x13A` | — | SMA 3:pal11 (white skull) | `DAMAGE_MESSAGE_POISON` | — |
 | Badly Poisoned | effect `0x13A` | — | SMA 3:pal7 (purple skull) | `DAMAGE_MESSAGE_POISON` (escalating) | — |
-| Paralysis | effect `0x1A7` | — | **none** | — | — |
+| Paralysis | effect `0x1A7` + speed down `0x18A` | — | **none** | — (hard action block, no damage) | — |
 | Frozen | effect `0x15` | — | SMA (persistent, ice block) | — | — |
 | Cringe | effect `0x143` | — | **none** | — | — |
 | Confused | — | SE `0x310` | SMA 5:pal0 (birds) | — | — |
