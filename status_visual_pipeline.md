@@ -353,7 +353,7 @@ decrement burn_damage_countdown
 **While frozen:**
 - `MonsterCannotAttack` returns true → turn skipped every turn (hard block)
 - No per-turn damage, no per-turn VFX, no entry in `FUN_0230fc24`
-- No `ChangeMonsterAnimation` call at infliction — renderer likely forces pose via status field check each frame (see Animation Mystery below)
+- No `ChangeMonsterAnimation` call at infliction — `FUN_02303f18` halts sprite frame advancement when `freeze == 1` (see Animation Freeze Mechanism section)
 - SMA ice overlay at Centre attachment point is the only ongoing visual
 
 **Thaw (`EndFrozenClassStatus`):**
@@ -409,20 +409,37 @@ All cases (except yawning transition) clear `0xBD = 0` and call `UpdateStatusIco
 
 **Source:** Ghidra decompilation of `TryInflictSleepStatus`, `EndSleepClassStatus`, `FUN_022e3e74`.
 
-### Animation Mystery: Freeze and Sleep
+### Animation Freeze Mechanism (CONFIRMED)
 
-Neither `TryInflictFrozenStatus` nor `TryInflictSleepStatus` call `ChangeMonsterAnimation` to switch the sprite to an appropriate pose. Both set their status field and play a one-shot effect, but leave the sprite animation unchanged.
+**Frozen (0xC4 == 1) and Petrified (0xC4 == 6)** do NOT change the sprite's animation group or force a specific pose. Instead, `FUN_02303f18` skips ALL `SwitchAnimationControlToNextFrame` calls when either status is active:
+```c
+// At the end of FUN_02303f18 (~0x02304398 region)
+sVar5 = (monster->statuses).freeze;
+if (sVar5 != (status_frozen_id_8)0x1 && sVar5 != (status_frozen_id_8)0x6) {
+    // ALL SwitchAnimationControlToNextFrame calls are inside this block
+    SwitchAnimationControlToNextFrame(...);  // conditional (idle/bide speed)
+    SwitchAnimationControlToNextFrame(...);  // always
+}
+// frozen/petrified: entire block skipped → sprite halts on current frame
+```
 
-This strongly suggests the **per-frame rendering path** (`FUN_02303f18` or the animation update system) checks status fields each frame and forces the correct animation group:
-- `0xBD` active (sleep/nightmare/napping) → sleep animation (group 5)
-- `0xC4 == 1` (frozen) → idle or frozen pose
+The sprite literally freezes on whatever frame it was displaying at the moment the status was inflicted. No animation group change, no forced idle pose — just a frame halt.
 
-**Status: Needs ROM confirmation.** Verify by testing freeze and sleep in-game:
-- Does the sprite visibly change pose?
-- Is the frozen sprite static or still animating (idle loop)?
-- Is the ice overlay opaque enough to cover the sprite?
+**`TryInflictFrozenStatus` confirmed:** No `ChangeMonsterAnimation` call exists anywhere in the infliction chain. The status field is set, the one-shot VFX plays, and the frame-halt in `FUN_02303f18` handles the rest.
 
-**Breadcrumb:** `FUN_02303f18` — per-frame entity update function documented in `positioning_system.md`. Likely contains the status → animation group override logic.
+**Sprite tremble effect:** `FUN_02303f18` applies a positional shake offset for petrified (freeze==6), paralysis (burn==4), and shadow hold (freeze==2), but NOT for regular frozen (freeze==1). The frozen sprite is completely still.
+```c
+// ~0x023043xx region of FUN_02303f18
+if ((uVar11 == 6 || sVar4 == (status_burn_id_8)0x4) || uVar11 == 2) {
+    *(ushort *)(param_1 + 0x48) = sVar20 + ((ushort)*DAT_023046d8 & 2);
+}
+```
+
+**Full frozen visual:** sprite halts on current frame (no tremble) + SMA ice overlay (anim 4, persistent) rendered at Centre attachment point + thaw plays one-shot effect 0x18 (24) on cure.
+
+**Sleep animation:** Still unconfirmed whether a similar mechanism forces the sleep pose (group 5). The frame-halt block only checks `freeze`, not `sleep`. Sleep pose forcing likely lives elsewhere — possibly in the animation ID selection logic earlier in `FUN_02303f18` via the `field_0x61` / `GetIdleAnimationId` path. Needs further investigation.
+
+**Source:** Ghidra decompilation of `FUN_02303f18`, confirmed by in-game testing.
 
 ### Burn Class: Two-Counter System
 
