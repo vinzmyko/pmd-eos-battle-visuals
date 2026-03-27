@@ -11,10 +11,12 @@ companion document `status_icon_system.md`.
 
 ## Visual Pipeline Overview
 
-Each status can trigger up to four visual stages:
+Each status can trigger up to five visual stages:
 
 ```
 1. APPLICATION   → One-shot effect.bin animation + sound + log message + icon appears
+1b. STAT CHANGE  → One-shot effect.bin animation for stat stage/multiplier changes
+1c. ACTION BLOCK → MonsterCannotAttack prevents action (no RNG, no VFX)
 2. PERSISTENCE   → Overhead SMA icon cycles while status is active
 3. PER-TICK      → Damage number + hurt animation + log message (each countdown cycle)
 4. EXPIRY/CURE   → Log message + icon removed + recovery animation
@@ -52,6 +54,8 @@ address range `022e4068`–`022e53f0`.
 | Speed Up | `PlaySpeedUpEffect` | `0x18B` | 395 | `DAT_022e4518` |
 | Speed Down | `PlaySpeedDownEffect` | `0x18A` | 394 | `DAT_022e4568` |
 | Yawning tick → Sleep | `FUN_022e53f0` | `0x19` | 25 | `022e53f0` (hardcoded) |
+| Sleep (infliction) | `FUN_022e3e74` | `0x25` | 37 | `022e3e74` (+ sound via `DAT_022e3ecc`) |
+| Freeze (thaw) | `FUN_022e6798` | `0x18` | 24 | `022e6798` (only for case 1: frozen) |
 | Damage (attacker side) | `FUN_022e45d0` part 1 | `0x2F` | 47 | `022e45dc` (hardcoded) |
 | Damage (defender side) | `FUN_022e45d0` part 2 | `0x30` | 48 | `022e4618` (hardcoded) |
 
@@ -118,7 +122,7 @@ a log message and icon update.
 | Protect | `FUN_022e40b8` | `022e40b8` |
 | Mirror Coat | `FUN_022e40bc` | `022e40bc` |
 | Encore | `FUN_022e4718` | `022e4718` |
-| Sleep / Yawning | `FUN_022e53ec` | `022e53ec` |
+| Yawning | `FUN_022e53ec` | `022e53ec` |
 | Wrapped | `FUN_022e4290` | `022e4290` |
 | Shadow Hold | `FUN_022e42e0` | `022e42e0` |
 | Constriction | `FUN_022e42e4` | `022e42e4` |
@@ -336,6 +340,90 @@ decrement burn_damage_countdown
 
 **Source:** All offsets and DAT_ references from Ghidra decompilation of `FUN_0230fc24`.
 
+### Freeze Lifecycle (0xC4 = 1)
+
+**Infliction (`TryInflictFrozenStatus`):**
+1. Immunity checks: Safeguard, `IsProtectedFromNegativeStatus`, exclusive item `EXCLUSIVE_EFF_NO_FREEZE`, Magma Armor ability, Ice type, lava terrain
+2. If target was wrapping (0xC4 = 3 or 4), `FreeOtherWrappedMonsters` releases wrapped monsters
+3. `FUN_022e4c4c` → `PlayEffectAnimationEntity(target, 0x15, palette=3)` — one-shot ice flash
+4. `info + 0xC4 = 1`, `info + 0xCC = CalcStatusDuration() + 1`, `info + 0xCD = 0`
+5. Log message, `UpdateStatusIconFlags` → SMA ice overlay (anim 4) starts rendering persistently
+6. `TryActivateQuickFeet`, `ChangeShayminForme` (Shaymin reverts to Land forme)
+
+**While frozen:**
+- `MonsterCannotAttack` returns true → turn skipped every turn (hard block)
+- No per-turn damage, no per-turn VFX, no entry in `FUN_0230fc24`
+- No `ChangeMonsterAnimation` call at infliction — renderer likely forces pose via status field check each frame (see Animation Mystery below)
+- SMA ice overlay at Centre attachment point is the only ongoing visual
+
+**Thaw (`EndFrozenClassStatus`):**
+
+| Case | Status | Visual | Releases Wrapped? |
+|------|--------|--------|-------------------|
+| 1 | Frozen | Log + `FUN_022e6798` → effect 0x18 (24) thaw effect | No |
+| 2 | (unused?) | Log only | No |
+| 3 | Shadow Hold | Log | Yes |
+| 4 | Wrap | Log | Yes |
+| 5 | Ingrain | Log only | No |
+| 6 | Petrified | Log only | No |
+| 7 | Constriction | Log only | No |
+
+All cases clear `0xC4 = 0` and call `UpdateStatusIconFlags`. Only case 1 (frozen) plays a thaw VFX. `FUN_02304a48` (reset to idle) is NOT called at thaw.
+
+**Source:** Ghidra decompilation of `TryInflictFrozenStatus`, `EndFrozenClassStatus`, `FUN_022e4c4c`, `FUN_022e6798`.
+
+### Sleep Lifecycle (0xBD = 1)
+
+**Infliction (`TryInflictSleepStatus`):**
+1. Immunity check via `IsProtectedFromSleepClassStatus`
+2. If already Sleepless (0xBD = 2) or Napping (5), log failure and return
+3. `FUN_022e3e74` → `PlayEffectAnimationEntity(target, 0x25)` — effect 37 (sleep dust/sparkles) + sound via `DAT_022e3ecc`
+4. `InflictSleepStatusSingle(target, turns)` — sets `0xBD = 1`, `0xBE = turns`
+5. `FUN_02304a48(target, 8)` — resets animation to idle (NOT sleep group 5)
+6. Log message, `TryActivateQuickFeet`
+
+No `ChangeMonsterAnimation(target, 5, ...)` call anywhere in the chain — renderer likely forces sleep pose via status field check each frame (see Animation Mystery below).
+
+**While sleeping:**
+- `MonsterCannotAttack` returns true → turn skipped (hard block)
+- SMA icon: Z's overhead (anim 16, palette 4)
+- No per-turn damage for regular sleep (0xBD = 1)
+- No per-turn VFX
+
+**Wake-up (`EndSleepClassStatus`):**
+
+| Case | Status | Visual | Damage/Heal |
+|------|--------|--------|-------------|
+| 1 | Sleep | Log + `FUN_02304a48(target, 8)` (idle reset) | None |
+| 2 | Sleepless | Log only | None |
+| 3 | Nightmare | Log + `FUN_02304a48(target, 8)` | Damage via `ApplyDamageAndEffectsWrapper(DAMAGE_MESSAGE_NIGHTMARE)` **at wake-up only** |
+| 4 | Yawning | Transitions to real sleep via `TryInflictSleepStatus` (fresh duration) | None |
+| 5 | Napping | Log + `FUN_02304a48(target, 8)` + `TryIncreaseHp` + `EndNegativeStatusCondition` | Heals HP + cures negative statuses **at wake-up only** |
+
+All cases (except yawning transition) clear `0xBD = 0` and call `UpdateStatusIconFlags`.
+
+**Key findings:**
+- Nightmare damage is dealt **at wake-up, not per-turn**. There is no nightmare entry in `FUN_0230fc24`.
+- Napping heals HP and cures negatives **at wake-up, not per-turn**. Same — no napping entry in `FUN_0230fc24`.
+- Yawning (case 4) with `in_r2 != 0` (the path from `TickStatusAndHealthRegen` counter expiry) recursively calls `TryInflictSleepStatus` with a freshly calculated duration.
+
+**Source:** Ghidra decompilation of `TryInflictSleepStatus`, `EndSleepClassStatus`, `FUN_022e3e74`.
+
+### Animation Mystery: Freeze and Sleep
+
+Neither `TryInflictFrozenStatus` nor `TryInflictSleepStatus` call `ChangeMonsterAnimation` to switch the sprite to an appropriate pose. Both set their status field and play a one-shot effect, but leave the sprite animation unchanged.
+
+This strongly suggests the **per-frame rendering path** (`FUN_02303f18` or the animation update system) checks status fields each frame and forces the correct animation group:
+- `0xBD` active (sleep/nightmare/napping) → sleep animation (group 5)
+- `0xC4 == 1` (frozen) → idle or frozen pose
+
+**Status: Needs ROM confirmation.** Verify by testing freeze and sleep in-game:
+- Does the sprite visibly change pose?
+- Is the frozen sprite static or still animating (idle loop)?
+- Is the ice overlay opaque enough to cover the sprite?
+
+**Breadcrumb:** `FUN_02303f18` — per-frame entity update function documented in `positioning_system.md`. Likely contains the status → animation group override logic.
+
 ### Burn Class: Two-Counter System
 
 Burn, poison, and badly poisoned have **two independent counters**:
@@ -479,15 +567,15 @@ For quick reference, here is every status that has ANY visual component, with al
 
 | Status | Apply Effect | Apply Sound | Persistent Icon | Tick Damage | Expire Anim |
 |--------|-------------|-------------|-----------------|-------------|-------------|
-| Sleep | — | — | SMA 16:pal4 (Z's) | — | WAN anim 8 |
+| Sleep | effect `0x25` (37) + sound | — | SMA 16:pal4 (Z's) | — (action blocked) | WAN anim 8 (idle reset) |
 | Sleepless | — | — | SMA 1:pal0 (tiny eye) | — | — |
-| Nightmare | — | — | SMA 16:pal4 (Z's) | damage via EndSleepClass | WAN anim 8 |
-| Napping | — | — | SMA 16:pal4 (Z's) | heals HP | WAN anim 8 |
+| Nightmare | effect `0x25` (37) + sound | — | SMA 16:pal4 (Z's) | damage at wake-up only (DAMAGE_MESSAGE_NIGHTMARE) | WAN anim 8 (idle reset) |
+| Napping | effect `0x25` (37) + sound | — | SMA 16:pal4 (Z's) | heals HP + cures negatives at wake-up only | WAN anim 8 (idle reset) |
 | Burn | effect `0x4C` | — | SMA 2:pal0 (flame) | `DAMAGE_MESSAGE_BURN` | — |
 | Poisoned | effect `0x13A` | — | SMA 3:pal11 (white skull) | `DAMAGE_MESSAGE_POISON` | — |
 | Badly Poisoned | effect `0x13A` | — | SMA 3:pal7 (purple skull) | `DAMAGE_MESSAGE_POISON` (escalating) | — |
 | Paralysis | effect `0x1A7` + speed down `0x18A` | — | **none** | — (hard action block, no damage) | — |
-| Frozen | effect `0x15` | — | SMA (persistent, ice block) | — | — |
+| Frozen | effect `0x15` (palette 3) | — | SMA 4:pal0 (persistent ice block at Centre) | — (action blocked) | effect `0x18` (24) thaw effect |
 | Cringe | effect `0x143` | — | **none** | — | — |
 | Confused | — | SE `0x310` | SMA 5:pal0 (birds) | — | — |
 | Cowering | WAN anim 10 | — | SMA 6:pal0 (swirls) | — | — |
@@ -542,3 +630,37 @@ The `damage_source` values passed to `ApplyDamageAndEffectsWrapper` for status t
 These correspond to `enum damage_source_non_move` values in pmdsky-debug headers.
 
 **Source:** Hardcoded values in `FUN_0230fc24` per-tick handler.
+
+---
+
+## Functions Used
+
+| Function | Address (NA) | Purpose |
+|----------|--------------|---------|
+| `ApplyDamage` | — | Main damage application, contains hurt visual sequence |
+| `ApplyDamageAndEffects` | — | Wrapper adding counter damage and contact abilities |
+| `PerformDamageSequence` | — | Hit check + ApplyDamageAndEffects + Illuminate |
+| `DealDamage` | — | Calc damage + PerformDamageSequence |
+| `DoMoveDamage` | — | DealDamage with multiplier 1 |
+| `FUN_022e5478` | `0x022e5478` | Hit reaction effect (matchup-based effect ID) |
+| `FUN_02304a48` | `0x02304a48` | Reset to idle animation |
+| `FUN_022e576c` | `0x022e576c` | Miss/block sound effect |
+| `ChangeMonsterAnimation` | — | Set animation group + direction |
+| `GetDirectionTowardsPosition` | — | Calculate facing direction |
+| `PlayEffectAnimationEntity` | — | Spawn + block on effect animation |
+| `HandleFaint` | — | Faint processing, removal, rewards |
+| `FUN_0230d618` | `0x0230d618` | Override matchup for hidden effectiveness |
+| `MonsterCannotAttack` | — | Checks if status prevents action (no RNG) |
+| `ShouldMonsterRunAway` | — | Tactic/ability flee check (fallthrough) |
+| `ExecuteMonsterAction` | — | Main action dispatcher, calls MonsterCannotAttack |
+| `RunFractionalTurn` | — | Per-fractional-turn orchestrator |
+| `TickStatusAndHealthRegen` | — | Decrements all status duration counters |
+| `TryInflictFrozenStatus` | — | Freeze infliction with immunity checks |
+| `EndFrozenClassStatus` | — | Thaw/cure all freeze class statuses |
+| `FUN_022e4c4c` | `0x022e4c4c` | Freeze application VFX (effect 0x15, palette 3) |
+| `FUN_022e6798` | `0x022e6798` | Thaw VFX (effect 0x18) |
+| `TryInflictSleepStatus` | — | Sleep infliction with immunity checks |
+| `EndSleepClassStatus` | — | Wake-up for all sleep class statuses |
+| `FUN_022e3e74` | `0x022e3e74` | Sleep application VFX (effect 0x25 + sound) |
+| `InflictSleepStatusSingle` | — | Inner sleep setter (writes 0xBD, 0xBE) |
+| `FreeOtherWrappedMonsters` | — | Releases wrapped monsters when wrapper's freeze class changes |
