@@ -573,8 +573,7 @@ struct status_icon_flags {
 - What is `manpu_ma.sma`? No image data, purpose unknown.
 - The persistent freeze icon rendering path (`022dcfac` region) may use a slightly different
   lookup mechanism — needs confirmation of which SMA anim/palette the freeze icon uses at runtime.
-- Do buff/debuff stat changes use additional visual effects beyond the `f_lowered_stat` icon?
-  (The `Play*StatEffect` functions in `move_orb_effects.c` suggest separate VFX for stat changes.)
+- Confirmed: No raised-stat icon exists. UpdateStatusIconFlags only checks for stats below default (multiplier < 0x100 or stage < 10). There is no corresponding check for stats above default. Stat buffs (Swords Dance, Calm Mind, etc.) produce only a one-shot effect.bin animation with no persistent overhead icon. Verified from UpdateStatusIconFlags decompilation at 022e3d28–022e3d80.
 - The `f_sleepless` icon (bit 0) maps to SMA anim 1 (tiny 8×8 eye) via table[1]. Previously
   thought to be null — resolved by the bit+1 indexing discovery.
 
