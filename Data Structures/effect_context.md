@@ -75,7 +75,7 @@ struct effect_context {
     /* 0x24 */ int16_t offset_x;           // Dual-purpose: attachment offset OR projectile arc offset
     /* 0x26 */ int16_t offset_y;           // Dual-purpose: attachment offset OR projectile arc offset
     /* 0x28 */ int8_t  attachment_point;   // Copied from effect_animation_info, read by binding system
-    /* 0x2C */ int32_t z_priority;
+    /* 0x2C */ int32_t z_priority;         // NOT OAM priority bits — see "z_priority Semantics" below
     /* ... */
     /* 0x3C */ uint32_t flags;             // Bit 0 = runtime loop flag
     /* 0x40 */ int32_t stored_anim_type;
@@ -190,6 +190,18 @@ if (param_2 != 0) {
     DeleteWanTableEntryVeneer(..., *(short *)(param_1 + 100));
 }
 ```
+
+### z_priority (offset 0x2C)
+
+Despite the name, this field is **not** the DS OAM priority (attr2 bits 10-11). Written by `FUN_022bfb6c` as `camera_z + direction_offset` (see `Systems/entity_positioning.md` "Z-priority logic"), but the meta-frame renderer (`FUN_0201c5c4` → `FUN_0201b6d4`) never reads this field.
+
+**What actually drives on-screen layering:**
+1. **DS OAM priority (2-bit)** — baked into WAN meta-frame piece data at piece[3]. Passes through the renderer unchanged. Used for BG layer separation (floor/entities/UI).
+2. **Within-layer ordering** — driven by sprite Y coordinate via a 256-bucket linked-list in `FUN_0200b6f0`. Lower Y → later insertion in bucket → drawn on top.
+
+See `Systems/meta_frame_rendering.md` for the full OAM submission pipeline.
+
+**Where +0x2C IS consumed:** not in the render path. Likely consumers are visibility culling, effect tick dispatch order, or higher-level scene management. The ±1 directional nudge from the DIRECTION_Z_TABLE at `0x022C7890` implies it's used for a sort/compare somewhere, but that call site is outside the meta-frame renderer. **Open question** — see below.
 
 ## Projectile Trajectory Fields (0x128-0x134)
 
@@ -336,6 +348,7 @@ void FUN_022bdfc0(int param_1, ...)
 - Complete layout between offsets 0xAC-0xE4
 - Screen effect control structure details (offset 0xE8)
 - Purpose of flags bits 1-31 (only bit 0 is known)
+- Where `effect_context + 0x2C` (z_priority) is actually read. Written by `FUN_022bfb6c`, but `FUN_0201c5c4` and `FUN_0201b6d4` (the meta-frame renderer chain) never read it. Suspected consumers: culling, tick order, or scene-level sort — not meta-frame submission.
 
 ## Functions Used
 
