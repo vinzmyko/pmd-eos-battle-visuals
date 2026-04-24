@@ -302,8 +302,27 @@ Writes entity position and attachment offset into the effect context.
 
 **Z-priority logic:**
 - bind_type 6 (primary): `cam_z + 1`
-- Directional effect (sequence_count % 8 == 0): `cam_z + DIRECTION_Z_TABLE[entity_direction]` (8-entry table at `DAT_022bfc58`)
+- Directional effect (low 3 bits of `effect_context + 0x10` == 0): `cam_z + DIRECTION_Z_TABLE[entity_direction & 7]`
 - Non-directional: `cam_z + 1`
+
+**DIRECTION_Z_TABLE** is pointed to by `DAT_022bfc58` (pointer at `0x022BFC58`). The table itself lives at `0x022C7890` and contains 8 × int32 entries:
+
+| Index | Direction | Z Offset |
+|-------|-----------|----------|
+| 0 | Down | +1 |
+| 1 | Down-Right | +1 |
+| 2 | Right | +1 |
+| 3 | Up-Right | -1 |
+| 4 | Up | -1 |
+| 5 | Up-Left | -1 |
+| 6 | Left | +1 |
+| 7 | Down-Left | +1 |
+
+**Semantic pattern:** directions 3/4/5 (the "away-facing" upward directions) produce a Z offset of -1, placing the effect behind the entity. All other directions produce +1, placing the effect in front. This matches the expected behaviour of a charge effect anchored to the attacker's back — it renders behind when the attacker faces away from the camera and in front when facing toward it.
+
+**Evidence:** `FUN_022bfb6c` at `0x022bfbf4` loads the pointer, then `ldmia r6!, {r0-r3}` + `ldmia r6, {r0-r3}` at `0x022bfbfc-0x022bfc08` reads all 8 entries (32 bytes) into a stack buffer before indexing with `param_5 & 7`. Confirmed table contents via direct memory inspection at `0x022C7890`.
+
+**Branch gate:** The directional path is only taken when `(effect_context + 0x10) & 7 == 0`. In practice this is always true for WAN-backed effects because `+0x10` (wan_ptr) is pointer-aligned.
 
 ### Cleanup (FUN_022e6dd0)
 
