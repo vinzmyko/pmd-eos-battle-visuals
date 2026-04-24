@@ -662,9 +662,11 @@ For accurate projectile recreation:
 **Resolved:** `FUN_022beb2c` runs unconditionally for all patterns. The arc is always computed. Visibility depends on `attachment_point` in effect_animation_info: if != -1 (true for all projectile effects), `FUN_022bf4f0` reads and applies the offset. Fast projectiles (4 frames) only reach ~-6px, making the arc imperceptible — this is why Water Gun appears "straight" on DS hardware.
 
 ### Decompiler artifacts
-**Resolved:** Two Ghidra decompiler errors identified:
-1. `_s32_div_f(0x80000, 0)` — divisor is actually `r1` = `tile_distance × frame_count`, not 0
-2. Amplitude for range >= 2 shown as flat 8 — actually `min(tile_distance * frame_count + 8, 64)`
+**Resolved via assembly verification at 0x02323334-0x0232336c:**
+1. `_s32_div_f(0x80000, 0)` — divisor is actually `r1`, set at `0x02323340` via `mul r1, r2, r0` where `r2 = tile_distance` (local_64) and `r0 = frame_count`. So phase_step = `0x80000 / (tile_distance × frame_count)`, not division by zero.
+2. Amplitude for range >= 2 shown as flat 8 — assembly at `0x02323344-0x02323358` shows `cmp r6, #0x2; blt → mov r4, #0x20` (short path = 32), else `add r4, r1, #0x8; cmp r4, #0x40; movge r4, #0x40` (long path = `min((tile_distance × frame_count) + 8, 64)`). The Ghidra output dropped the MUL term.
+
+These were verified by cross-referencing the register state against the decompiler output, not by trusting the decompiler. Future RE work in this function should prefer the listing view over decomp for any arithmetic.
 
 ## Functions Used
 
