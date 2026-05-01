@@ -659,7 +659,6 @@ For accurate projectile recreation:
 ## Open Questions
 
 - Purpose of FUN_0234b4cc calls (enable/disable something)
-- Complete list of moves that have non-zero values in flags bits 0-2 (even though they're overridden to 0 for projectiles)
 
 ## Resolved Questions
 
