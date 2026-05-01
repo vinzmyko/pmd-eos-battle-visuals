@@ -224,24 +224,33 @@ sVar1 = *(short *)(DAT_02323c34 + iVar4);        // Reversed Y delta
 
 ### Wave Pattern Determination
 
-Wave pattern is stored in **move_animation_info flags bits 0-2** (mask 0x07), extracted by `FUN_022bfd58`. However, the value is **overridden at runtime** by `FUN_02325d20` in `FUN_02324e78`.
+Wave pattern is stored in **move_animation_info flags bits 0-2** (mask 0x07), extracted by `FUN_022bfd58` from the move animation data. The value flows through `FUN_02322ddc` → `FUN_02324e78` → `FUN_023230fc` as param_4.
 
-**The override logic in `FUN_02324e78`:**
-```c
-bVar4 = FUN_022bfd58((uint)uVar8);           // flags & 7 from animation data
-uVar12 = FUN_02325d20((int)param_1, param_2); // terrain/move check
-uVar13 = uVar12;                              // 0 for most moves
-if (uVar12 != 0) {
-    uVar13 = (uint)bVar4;                    // only use flags & 7 if FUN_02325d20 returns 1
-}
-bVar7 = (byte)uVar13;                        // final wave pattern
+**Earlier analysis incorrectly claimed FUN_02325d20 forces this to 0 for all projectile moves.** That was a misreading of the comma expression in `FUN_02324e78`. The actual asm at `0x02324f00`:
+
+```arm
+cmp r8, #0x0       ; param_3 (first-strike flag)
+moveq r0, r10      ; if param_3 == 0, return raw flags
+beq LAB_023250c8
 ```
 
-**`FUN_02325d20` only returns 1 for two moves:**
-- Move 0x9C (156 = **Dive**) when standing on a ground tile
-- Move 0x8 (8 = **Dig**) when standing on a non-water tile
+And earlier:
+```arm
+cmp r0, #0x0       ; FUN_02325d20 result
+movne r0, r10      ; if Dive/Dig terrain match, return raw flags
+bne LAB_023250c8
+```
 
-**Neither Dive nor Dig are projectile moves** (both are two-turn melee moves with `target_range: 116`). Therefore, in practice, **all projectile moves receive wave pattern 0** (straight line).
+So `FUN_02324e78` returns the raw `flags & 7` value in three cases:
+1. Entity not visible (`ShouldDisplayEntityAdvanced` false)
+2. Dive/Dig on matching terrain (`FUN_02325d20` returns nonzero)
+3. Subsequent strike of multi-strike move (`param_3 == 0`)
+
+The override path that COULD return 0 only triggers when `FUN_02325d20` returns 0 (NOT Dive/Dig) AND param_3 != 0 AND `sVar1 != 0` (move has charge effect). But within that path, `bVar7 = bVar4` is reassigned to raw flags via the comma expression `(bVar7 = bVar4, param_3 != 0)`, so the final return is still raw.
+
+**Conclusion: projectile moves receive their raw wave_pattern from move_animation_info, not 0.** This was confirmed by ROM observation — Egg Bomb (single-strike) and Bonemerang (multi-strike) both visibly arc with sine wave patterns.
+
+**FUN_02325d20** is still relevant for Dive/Dig — those moves use their flags-based wave pattern when on matching terrain, and use 0 when on non-matching terrain. But this only affects two specific moves, not the projectile system in general.
 
 **Reverse direction projectiles** (`FUN_0232393c`) always use wave pattern 0 regardless of flags.
 
@@ -624,7 +633,7 @@ For accurate projectile recreation:
 | **Dest X** | `target_tile.x * 24 + 12` |
 | **Dest Y** | `target_tile.y * 24 + 16` |
 | **Direction** | `attacker.monster_info[0x4C]` (0-7) |
-| **Wave Pattern** | Always 0 for projectile moves (see FUN_02325d20 analysis) |
+| **Wave Pattern** | From `move_animation_info.flags & 7` (raw, no override for projectile moves) |
 | **Speed** | From `move_animation_info.projectile_speed` mapped via table |
 | **Amplitude** | 32 if `GetMoveRangeDistance < 2`, else `min(range * frame_count + 8, 64)` |
 | **Gravity n** | Always 6 (dest is always 1 tile ahead in effect context) |
@@ -651,12 +660,11 @@ For accurate projectile recreation:
 
 - Purpose of FUN_0234b4cc calls (enable/disable something)
 - Complete list of moves that have non-zero values in flags bits 0-2 (even though they're overridden to 0 for projectiles)
-- Whether any non-projectile code path can reach FUN_023230fc with wave pattern != 0
 
 ## Resolved Questions
 
 ### Wave patterns 1/2 usage
-**Resolved:** `FUN_02325d20` forces wave pattern to 0 for all moves except Dive (0x9C) and Dig (0x8) on matching terrain. Since neither is a projectile move, all projectiles get pattern 0 in practice.
+**Resolved (corrected):** `FUN_02324e78` returns the raw `flags & 7` value for all projectile moves. An earlier reading of the comma expression incorrectly suggested an override to 0; the actual asm shows `bVar7 = bVar4` reassigns to raw before any potential override-application path. Confirmed by ROM observation — projectile moves visibly use their flags-based wave patterns.
 
 ### Whether gravity arc applies to pattern 0
 **Resolved:** `FUN_022beb2c` runs unconditionally for all patterns. The arc is always computed. Visibility depends on `attachment_point` in effect_animation_info: if != -1 (true for all projectile effects), `FUN_022bf4f0` reads and applies the offset. Fast projectiles (4 frames) only reach ~-6px, making the arc imperceptible — this is why Water Gun appears "straight" on DS hardware.
