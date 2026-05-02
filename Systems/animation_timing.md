@@ -501,3 +501,4 @@ Specific moves trigger a brightness fade-in during the charge phase:
 | `FUN_0234ba54` | `0x0234ba54` | Pre-screen effect wait |
 | `AnimationDelayOrSomething` | - | Standard post-animation delay |
 | `FUN_023250d4` | `0x023250d4` | Monster animation handler (types 98/99 logic) |
+| `FUN_022bf2b4` | `0x022bf2b4` | Type 7 effect dispatch (writes attachment_point, calls FUN_022be780) |
