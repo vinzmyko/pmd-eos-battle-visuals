@@ -95,6 +95,37 @@ if (iVar6 == 3) {
 }
 ```
 
+### Effect Dispatch Types
+
+`FUN_022be780` (the main effect dispatcher) is called with one of five dispatch type values that select the spawn path. These are distinct from `anim_type` — they describe how an effect is *requested*, not what kind of WAN it uses.
+
+| Dispatch Type | Purpose | Caller |
+|---------------|---------|--------|
+| 1 | Layer 1 secondary (move pipeline) | `FUN_022bed90` |
+| 2 | Layer 3 projectile (move pipeline) | `FUN_022be9e8` |
+| 5 | Layer 0 charge (move pipeline) | `FUN_022bfaa8` |
+| 6 | Layer 2 primary (move pipeline) | `FUN_022bfc5c` |
+| 7 | Generic entity-positioned (non-move) | `FUN_022bf2b4` |
+
+Types 1/2/5/6 are the move animation layer dispatches. Type 7 is used by code outside the move animation pipeline — hit reactions, status visuals, ability activations — and bypasses the move-layer conflict tracking.
+
+**Type 7 dispatcher (`FUN_022bf2b4`):**
+```c
+void FUN_022bf2b4(uint *params, int param_2)
+{
+    effect_animation *anim = GetEffectAnimation(params[0]);
+    *(int8_t *)(params + 5) = anim->attachment_point;  // byte[0x14]
+    FUN_022be780(7, params, param_2);
+}
+```
+
+The caller hand-builds the params struct (effect_id, position, direction, etc.). `FUN_022bf2b4` looks up the attachment_point from `effect_animation_info` and writes it into byte offset 0x14 of the params struct before dispatch — this is the index used by the per-frame binding system, not the precomputed offset.
+
+**Callers of type 7:**
+- `PlayEffectAnimationEntity` — used for matchup hit reactions (effects 8/9/10/11), status visuals, etc.
+- `PlayEffectAnimationPixelPos` — position-based variant
+- `FUN_022e5bd8` and `FUN_022e6a00` — unidentified, likely status icon or ability-activation spawning
+
 
 ### WAN File 0/1 Shared Resource System
 
