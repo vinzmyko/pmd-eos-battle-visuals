@@ -107,6 +107,10 @@ void FUN_022e5478(int *param_1, int param_2)
 
 `PlayEffectAnimationEntity` is called with `play_now = '\x01'`, which triggers the blocking 100-frame timeout wait loop. The hurt reaction effect plays to completion (or timeout) before the 10-frame hold begins.
 
+Internally, `PlayEffectAnimationEntity` dispatches via `FUN_022bf2b4` → `FUN_022be780(7, ...)` — **dispatch type 7** (generic entity-positioned), not the type 6 used by move primary visuals. This means matchup hit effects don't participate in the move-layer conflict tracking and can layer freely with any move visuals still present in the effect pool.
+
+> See `Data Structures/effect_animation_info.md` → "Effect Dispatch Types" for the full type table.
+
 ## Reset to Idle (FUN_02304a48)
 
 Called after hurt animation with `param_2 = 8`. Resets animation to idle, does not change direction.
@@ -242,6 +246,7 @@ The WAN frame flag `(flags & 2)` in `FUN_023250d4` triggers `FUN_02325644`, whic
 | `DealDamage` | — | Calc damage + PerformDamageSequence |
 | `DoMoveDamage` | — | DealDamage with multiplier 1 |
 | `FUN_022e5478` | `0x022e5478` | Hit reaction effect (matchup-based effect ID) |
+| `FUN_022bf2b4` | `0x022bf2b4` | Type 7 dispatch wrapper used by PlayEffectAnimationEntity |
 | `FUN_02304a48` | `0x02304a48` | Reset to idle animation |
 | `FUN_022e576c` | `0x022e576c` | Miss/block sound effect |
 | `ChangeMonsterAnimation` | — | Set animation group + direction |
