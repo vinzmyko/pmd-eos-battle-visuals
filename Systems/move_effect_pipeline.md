@@ -410,14 +410,15 @@ FUN_02322374 (Move execution coordinator)
 
 ## Effect Dispatch Types
 
-The first parameter to `FUN_022be780` indicates the handler type:
+The first parameter to `FUN_022be780` indicates the handler type. Types 1/2/5/6 are the move animation layer dispatches documented here; type 7 is the generic entity-positioned dispatch used outside the move pipeline (hit reactions, status visuals).
 
-| Dispatch Type | Layer | Handler |
-|---------------|-------|---------|
-| 1 | 1 (Secondary) | Standard allocation |
-| 2 | 3 (Projectile) | With trajectory setup |
-| 5 | 0 (Charge) | Charge effects |
-| 6 | 2 (Primary) | Main visual |
+| Dispatch Type | Layer | Handler | Context |
+|---------------|-------|---------|---------|
+| 1 | 1 (Secondary) | Standard allocation | Move pipeline |
+| 2 | 3 (Projectile) | With trajectory setup | Move pipeline |
+| 5 | 0 (Charge) | Charge effects | Move pipeline |
+| 6 | 2 (Primary) | Main visual | Move pipeline |
+| 7 | — | Entity-positioned, hand-built params | Non-move (see effect_animation_info.md) |
 
 ## Move Animation Flags
 
