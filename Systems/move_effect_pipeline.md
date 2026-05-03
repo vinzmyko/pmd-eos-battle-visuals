@@ -412,13 +412,15 @@ FUN_02322374 (Move execution coordinator)
 
 The first parameter to `FUN_022be780` indicates the handler type. Types 1/2/5/6 are the move animation layer dispatches documented here; type 7 is the generic entity-positioned dispatch used outside the move pipeline (hit reactions, status visuals).
 
-| Dispatch Type | Layer | Handler | Context |
-|---------------|-------|---------|---------|
-| 1 | 1 (Secondary) | Standard allocation | Move pipeline |
-| 2 | 3 (Projectile) | With trajectory setup | Move pipeline |
-| 5 | 0 (Charge) | Charge effects | Move pipeline |
-| 6 | 2 (Primary) | Main visual | Move pipeline |
-| 7 | — | Entity-positioned, hand-built params | Non-move (see effect_animation_info.md) |
+| Dispatch Type | Layer | Bind Type | Handler | Context |
+|---------------|-------|-----------|---------|---------|
+| 1 | 1 (Secondary) | 1 | Standard allocation | Move pipeline |
+| 2 | 3 (Projectile) | 2 | With trajectory setup | Move pipeline |
+| 5 | 0 (Charge) | 5 | Charge effects | Move pipeline |
+| 6 | 2 (Primary) | 6 | Main visual | Move pipeline |
+| 7 | — | varies | Entity-positioned, hand-built params | Non-move (see effect_animation_info.md) |
+
+**Z-priority varies by bind type.** Bind type 6 (primary) unconditionally uses `cam_z + 1`; all others consult the directional table at `0x022C7890` when the effect is directional. See `entity_positioning.md` → "Z-priority logic" for the full rules and the implementation pitfall.
 
 ## Move Animation Flags
 

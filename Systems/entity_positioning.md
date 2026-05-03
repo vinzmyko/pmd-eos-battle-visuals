@@ -300,10 +300,13 @@ Writes entity position and attachment offset into the effect context.
 
 **Position override:** If effect_context + 0x136 is nonzero, position comes from +0x138 instead of entity. This is how projectiles detach from entity tracking after launch.
 
-**Z-priority logic:**
-- bind_type 6 (primary): `cam_z + 1`
-- Directional effect (low 3 bits of `effect_context + 0x10` == 0): `cam_z + DIRECTION_Z_TABLE[entity_direction & 7]`
-- Non-directional: `cam_z + 1`
+**Z-priority logic** (in priority order — first match wins):
+
+1. **bind_type 6 (primary):** unconditionally `cam_z + 1`. Bypasses the directional table entirely. This means primary-layer hit visuals always render in front of the target regardless of facing.
+2. **Directional effect** (`effect_context + 0x10 & 7 == 0`): `cam_z + DIRECTION_Z_TABLE[entity_direction & 7]`. Used for charge (bind 5), secondary (bind 1), projectile (bind 2).
+3. **Non-directional:** `cam_z + 1`.
+
+**Implementation note for client implementers:** rule 1 is easy to miss. A client that applies the directional table to all entity-bound effects will produce a Z value of `-1` for primaries when the target faces Up/Up-Left/Up-Right (after `face_toward(attacker)` for an attacker positioned below). Combined with Y-sort, this places the primary visual behind the target — visible bug. Bind type 6 must short-circuit the directional table.
 
 **DIRECTION_Z_TABLE** is pointed to by `DAT_022bfc58` (pointer at `0x022BFC58`). The table itself lives at `0x022C7890` and contains 8 × int32 entries:
 
@@ -322,7 +325,7 @@ Writes entity position and attachment offset into the effect context.
 
 **Evidence:** `FUN_022bfb6c` at `0x022bfbf4` loads the pointer, then `ldmia r6!, {r0-r3}` + `ldmia r6, {r0-r3}` at `0x022bfbfc-0x022bfc08` reads all 8 entries (32 bytes) into a stack buffer before indexing with `param_5 & 7`. Confirmed table contents via direct memory inspection at `0x022C7890`.
 
-**Branch gate:** The directional path is only taken when `(effect_context + 0x10) & 7 == 0`. In practice this is always true for WAN-backed effects because `+0x10` (wan_ptr) is pointer-aligned.
+**Branch gate:** The directional path is only taken when `(effect_context + 0x10) & 7 == 0`. In practice this is always true for WAN-backed effects because `+0x10` (wan_ptr) is pointer-aligned. Note this gate is checked **after** the bind_type 6 short-circuit — primaries skip the gate entirely.
 
 ### Cleanup (FUN_022e6dd0)
 
