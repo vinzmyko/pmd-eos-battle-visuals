@@ -70,6 +70,133 @@ void ExecuteMoveEffect(target_list *targets, entity *attacker, move *move, ...)
 }
 ```
 
+## ExecuteMoveEffect Per-Target Loop Body
+
+The function iterates `targets->targets[0..0x40]` until a null entry. Each target gets the full hit-or-miss pipeline before the next is processed.
+
+### Loop Structure
+
+```c
+for (local_9c = 0; local_9c < 0x40; local_9c++) {
+    entity = targets->targets[local_9c];
+    if (entity == NULL || !EntityIsValid(attacker)) break;
+    if (!EntityIsValid(entity)) continue;
+
+    // Pre-checks (Snatch, Magic Coat, Mirror Move, Protect, Soundproof, Forewarn)
+    // First-target gating (Anticipation, Frisk, low-HP redirect) — see below
+    // Per-target wake-on-hit
+    TryEndPetrifiedOrSleepStatus(attacker, target);
+    // Per-target camera pan for off-screen wild monsters
+    FUN_022f9840(target, ...);
+
+    bVar31 = MoveHitCheck(attacker, target, move, '\0', ...);
+    if (bVar31) {
+        // Hit path: animation block + DoMoveX dispatch
+        local_a4++;
+    } else {
+        // Miss path
+        local_a8++;
+    }
+
+    if (IsFloorOver()) break;
+}
+
+// Post-loop logic (Healing Wish, Wary Fighter, etc.)
+```
+
+### Hit Path Animation Block
+
+Only runs if `ShouldDisplayEntityWrapper(target)` is true.
+
+```c
+FUN_022ea370(4, 0x4a, ...);                    // 4-frame pre-delay
+
+if (FUN_022bfd6c(move->id)) {                  // Flag bit 3 (dual-target)
+    FUN_023258ec(attacker, target, move, ...); // Skill Swap etc.
+} else {
+    if (move->id == 0xad) AnimationDelayOrSomething('\x01');
+
+    // local_e0 redirect for moves 0x1F4 and 0x50
+    if (local_e0 != NULL && (move->id == 0x1F4 || move->id == 0x50)) {
+        PlayMoveAnimation(attacker, local_e0, move, NULL);
+    } else {
+        PlayMoveAnimation(attacker, target, move, NULL);
+    }
+}
+```
+
+The `local_e0` redirect: when set (by the Mirror Move / Magic Coat reflection branch earlier in the loop), moves 0x1F4 (500) and 0x50 (80) animate to the stored redirect target instead. Likely tied to Follow Me / move-stealing mechanics.
+
+### Move Effect Dispatch (Indirect Jumptable)
+
+After the animation block, the move's effect handler is invoked through an indirect jumptable:
+
+```c
+peVar26[1].field_0xaa = '\x01';
+(*(code *)(move_id * 4 + 0x0232f8b8))();  // Master DoMoveX dispatch
+```
+
+The table at `0x0232f8b8` has one 4-byte entry per move ID (>540 entries). **Ghidra cannot follow this jump** — the decompilation shows the function as terminating here with "unreachable block" warnings. Actual control flow falls through into post-dispatch code at `0x023326c8` and continues the loop.
+
+> See `move_effect_mechanics.md` for the `DoMoveX` wrapper pattern called from this jumptable.
+
+### Miss Branch
+
+When the move misses (`bVar31 == false`):
+
+1. **Miss sound** — leader vs normal selected by `attacker->info[0x7]`:
+   - `info[7] != 0`: `PlaySeByIdIfShouldDisplayEntity(attacker, DAT_0232f83c)` (leader miss SE)
+   - `info[7] == 0`: `PlaySeByIdIfShouldDisplayEntity(attacker, DAT_0232f840)` (normal miss SE)
+
+2. **Miss message** — variant by attacker/target relationship and miss reason:
+
+| Condition | Message DAT |
+|---|---|
+| Self-target | `DAT_0232f844` |
+| Treatment == TREAT_AS_ALLY | `DAT_0232f848` |
+| Enemy + `local_b0 != 0` (reflected/snatched) | `DAT_0232f84c` |
+| Enemy + `local_b4 != 0` (returned/bounced) | `DAT_0232f850` |
+| Enemy default | `DAT_0232f854` |
+
+3. **MISS popup**: `DisplayAnimatedNumbers(0x270F, target, 1, NUMBER_COLOR_AUTO)` — `0x270F` (9999) is the MISS sentinel (see `status_visual_pipeline.md`).
+
+4. **Recoil exception** — Jump Kick (0xCC) and Hi Jump Kick (0xCE) still call their `DoMoveX` handler on miss to apply recoil damage:
+```c
+   if (move_id == MOVE_JUMP_KICK)    DoMoveJumpKick(attacker, target, move, param_4);
+   if (move_id == MOVE_HI_JUMP_KICK) DoMoveHiJumpKick(attacker, target, move, param_4);
+```
+
+5. Bump `local_a8`, check `IsFloorOver()`, continue.
+
+### First-Target Gating (`local_9c == 0`)
+
+Several hooks fire only when processing the first entry in the target list, not every target in a radial sweep:
+
+- **Anticipation:** Attacker has `ABILITY_ANTICIPATION` and (`HasSuperEffectiveMoveAgainstUser(attacker, target, 1)` OR `FUN_022fb1a8(target) != 0`) → log Anticipation flavor text via `DAT_0232f808`
+- **Frisk:** Attacker has `ABILITY_FRISK` → `TryActivateFrisk(attacker, target)`
+- **Low-HP ally redirect:** Target has `HasLowHealth(target) == true` and move uses range mask in `{0x00, 0x40, 0x50, 0x80, 0x90}` → `FUN_023381c0(target)` attempts to redirect to a different ally (likely Substitute-style intercept)
+
+For a 4-target radial, these fire on target 1 only.
+
+### Post-Loop Logic
+
+After the main loop exits:
+
+1. **Counter fallback:** `if (local_a8 < 1) local_a8 = local_a4` — if nothing missed, use hit count as the "anything happened" signal for post-move hooks.
+
+2. **Healing Wish / Lunar Dance:** If `IsHealingWishOrLunarDance(move_id)`, apply near-fatal damage to the user:
+```c
+   ApplyDamageAndEffectsWrapper(attacker, hp - 1, DAMAGE_MESSAGE_ALMOST_FAINTED, ...);
+```
+
+3. **Wary Fighter:** If `local_a8 > 0` AND attacker valid AND `param_4 == 0` AND attacker is NOT Sleep Talking AND `IqSkillIsEnabled(attacker, IQ_WARY_FIGHTER)` AND **move range mask != `0x50`** (10-tile projectile excluded) → `FUN_023201d0(attacker, perpendicular_dir, 1, DAT_023329e4)` (makes attacker face sideways).
+
+4. **TryWarp:** If `attacker->info[0x15e] != 0` → clear flag, call `TryWarp(attacker, attacker, WARP_RANDOM, NULL)`.
+
+5. **Stat-drop:** If `attacker->info[0x15f] != 0` → clear flag, `LowerOffensiveStat(attacker, attacker, ATK_STAT_IDX, 2, 0, 0)` (Hyper Beam / Outrage cooldown stat drop).
+
+6. **Hyper Beam variant cleanup:** If `move->id == DAT_023329d8` (likely Hyper Beam = 0x1F6) → clear `attacker->info[0x170]`.
+
 ## PlayMoveAnimation
 
 Standard single-target move animation handler.
