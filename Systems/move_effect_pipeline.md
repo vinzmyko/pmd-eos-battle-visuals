@@ -104,6 +104,54 @@ for (local_9c = 0; local_9c < 0x40; local_9c++) {
 // Post-loop logic (Healing Wish, Wary Fighter, etc.)
 ```
 
+## Per-Target Camera Pan (FUN_022f9840)
+
+Called inside the per-target loop, BEFORE the hit/miss branch. Scrolls the camera to off-screen wild monsters being targeted by a move (e.g., a radial that hits a wild Pokemon in a different part of the room).
+
+**Evidence:** `FUN_022f9840`
+```c
+void FUN_022f9840(entity *target, ...)
+{
+    bool should_pan = false;
+
+    if (!EntityIsValid(target)) return;
+
+    if (target->type == 1 /* monster */) {
+        should_pan = (target->info[0x6] == 0);  // info[6] == 0 → likely "is wild / not on player team"
+    }
+
+    if (FUN_0204aef0() == 0) should_pan = false;  // Global enable flag
+
+    if (!should_pan) return;
+
+    if (ShouldDisplayEntityWrapper(target)) return;  // Already visible — no pan needed
+
+    TryPointCameraToMonster(target, '\x01', '\x01');
+}
+```
+
+### Fire Conditions (all must hold)
+
+1. Target is valid
+2. Target is a monster
+3. `target->info[0x6] == 0` — almost certainly "wild monster / not on player team"
+4. `FUN_0204aef0()` returns non-zero (global enable, likely "dungeon mode active and rendering")
+5. Target is **not** currently visible (`ShouldDisplayEntityWrapper` returns false)
+
+### Implementation Note
+
+For client engines where all combatants are always on-screen (autobattlers, fixed-camera arena games), this function is a no-op and should not be ported. The camera-pan is only meaningful when the play field exceeds the viewport.
+
+### Functions Used
+
+| Function | Address (NA) | Purpose |
+|---|---|---|
+| `FUN_022f9840` | `0x022f9840` | Per-target camera-pan helper |
+| `EntityIsValid` | — | Validate entity pointer |
+| `FUN_0204aef0` | `0x0204aef0` | Global enable check (unconfirmed semantics) |
+| `ShouldDisplayEntityWrapper` | — | Is entity in the current viewport |
+| `TryPointCameraToMonster` | — | Scroll camera to target entity |
+
 ### Hit Path Animation Block
 
 Only runs if `ShouldDisplayEntityWrapper(target)` is true.
