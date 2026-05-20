@@ -194,13 +194,42 @@ FUN_022ea370(0x1e, 0x18, ...);  // 30-frame hold (~0.5s)
 
 ## Timing Summary
 
-| Phase | Frames | Duration (60fps) |
-|-------|--------|-------------------|
-| Hurt animation (group 6) starts | — | Immediate |
-| Hit reaction effect (blocking) | Variable | Up to 100 frames max |
-| Post-hurt hold | 10 | ~0.167s |
-| Reset to idle | — | Immediate |
-| Faint hold (if hp == 0) | 30 | ~0.5s |
+### Per-Phase Breakdown
+
+| Phase | Frames | Duration (60fps) | Blocking? |
+|-------|--------|-------------------|-----------|
+| `DisplayAnimatedNumbers` | ~0 | Fire-and-forget | No |
+| Face attacker + group 6 hurt animation | — | Immediate dispatch | No |
+| `FUN_022e5478` hit reaction effect | 20–100 | ~0.33–1.67s | **Yes** (loops on `AnimationHasMoreFrames`, 100-frame timeout) |
+| Post-hurt hold (`FUN_022ea370(10, 0x18, ...)`) | 10 | ~0.167s | Yes |
+| Reset to idle (`FUN_02304a48`) | — | Immediate | No |
+| Faint hold (if hp == 0) | 30 | ~0.5s | Yes |
+| `HandleFaint` (if hp == 0) | — | Variable | — |
+
+### Per-Target Total Duration
+
+Cumulative blocking time for a single target taking damage:
+
+| Scenario | Total Frames | Duration (60fps) |
+|---|---|---|
+| Damage, survives — typical | ~30–50 | ~0.5–0.83s |
+| Damage, survives — worst case (hit reaction times out) | ~110 | ~1.83s |
+| Damage, faints — typical | ~60–80 | ~1.0–1.33s |
+| Damage, faints — worst case | ~140 | ~2.33s |
+
+### Multi-Target Stacking
+
+`ExecuteMoveEffect` processes targets **sequentially**, calling `ApplyDamage` once per target. The full hurt sequence above runs for each target before the loop advances. For multi-target moves:
+
+| Move type | Targets | Typical blocking time | Worst case |
+|---|---|---|---|
+| Single-target | 1 | ~0.5–0.83s | ~1.83s |
+| Radial (Nearby) | up to 8 + user | ~4–7s | ~16s |
+| Room | up to 20 | ~10–17s | ~37s |
+
+Client implementations that want competitive snappiness should either parallelize per-target hurt sequences or shorten the hit reaction effect / post-hurt hold for multi-target moves.
+
+> See `Systems/move_effect_pipeline.md` → `ExecuteMoveEffect Per-Target Loop Body` for the target iteration logic.
 
 ## Hunger Damage Special Case
 
