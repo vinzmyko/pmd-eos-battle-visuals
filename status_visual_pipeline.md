@@ -409,6 +409,28 @@ All cases (except yawning transition) clear `0xBD = 0` and call `UpdateStatusIco
 
 **Source:** Ghidra decompilation of `TryInflictSleepStatus`, `EndSleepClassStatus`, `FUN_022e3e74`.
 
+### Wake-on-Hit During Move Resolution
+
+`TryEndPetrifiedOrSleepStatus` is also called per-target inside `ExecuteMoveEffect`'s loop body, not just from the per-turn tick at `FUN_0230fc24`. The call fires after Snatch / Magic Coat / Mirror Move resolution but **before** the hit-check and damage dispatch.
+
+**Evidence:** `ExecuteMoveEffect` loop body
+```c
+// ... Snatch/MagicCoat/MirrorMove pre-checks ...
+TryEndPetrifiedOrSleepStatus(attacker, target);
+// ... MoveHitCheck, then DoMoveX dispatch ...
+```
+
+### Implications for Multi-Target Moves
+
+For a radial / room-range sweep that includes sleeping or petrified targets:
+
+- Each target's wake-on-hit fires **independently**, per iteration of the target loop
+- Wake happens **before** the hit-check and damage roll for that target — the wake itself does not interrupt damage application
+- Woken targets cannot act until their next turn (sleep is cleared, but turn order is unaffected)
+- For nightmare (`0xBD == 3`), the wake-up still applies the `DAMAGE_MESSAGE_NIGHTMARE` damage even when triggered mid-move-resolution
+
+> See `Systems/move_effect_pipeline.md` → `ExecuteMoveEffect Per-Target Loop Body` for the surrounding control flow.
+
 ### Animation Freeze Mechanism (CONFIRMED)
 
 **Frozen (0xC4 == 1) and Petrified (0xC4 == 6)** do NOT change the sprite's animation group or force a specific pose. Instead, `FUN_02303f18` skips ALL `SwitchAnimationControlToNextFrame` calls when either status is active:
