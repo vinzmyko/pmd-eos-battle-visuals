@@ -9,6 +9,14 @@
 - Special monster animations 98/99 trigger multi-directional attacks with unique spawning behavior
 - Projectile spawning follows a specific call chain from move execution to motion handling
 
+## Move Handler Structure
+
+Most move handlers are **inline within ExecuteMoveEffect** via the dispatch table at `0x0232f8b8`. Each entry is a `B` (branch) instruction, not a function pointer. Only a small set of moves have separate symbolized functions: `DoMoveBlastBurn`, `DoMoveBide`, `DoMoveSolarBeam`, `DoMoveDamage`, `DoMoveDamageWeightDependent`, `DoMoveJumpKick`, `DoMoveHiJumpKick`, and others enumerated in `overlay_29_02328030.s`.
+
+The remaining moves — including Outrage, Thrash, Petal Dance, U-Turn, and many others — exist only as labeled code blocks reachable through the dispatch table. Ghidra's decompiler marks them as "unreachable blocks" due to the indirect jump. Symbol-based searches for `DoMoveX` functions will miss them.
+
+Dispatch table entries decode as ARM `B` instructions: for move ID `N`, the entry at `0x0232f8b8 + N*4` branches to the move's handler block.
+
 ## Pipeline Overview
 ```
 ExecuteMoveEffect
@@ -241,9 +249,9 @@ After the main loop exits:
 
 4. **TryWarp:** If `attacker->info[0x15e] != 0` → clear flag, call `TryWarp(attacker, attacker, WARP_RANDOM, NULL)`.
 
-5. **Stat-drop:** If `attacker->info[0x15f] != 0` → clear flag, `LowerOffensiveStat(attacker, attacker, ATK_STAT_IDX, 2, 0, 0)` (Hyper Beam / Outrage cooldown stat drop).
+5. **Self-stat-drop:** If `attacker->info[0x15f] != 0` → clear flag, `LowerOffensiveStat(attacker, attacker, stat_idx, 2, 0, 0)`. `stat_idx` comes from the global `*DAT_0232f7b0` (set per-move). This is the SpA-2 self-debuff for Overheat-class moves (Overheat, Draco Meteor, Leaf Storm, Psycho Boost) — **not** a Hyper Beam recharge mechanism. Setter location for `info[0x15F]` and `*DAT_0232f7b0` unknown.
 
-6. **Hyper Beam variant cleanup:** If `move->id == DAT_023329d8` (likely Hyper Beam = 0x1F6) → clear `attacker->info[0x170]`.
+6. **U-Turn cleanup:** If `move->id == DAT_023329d8` (= `0x1F6` = `MOVE_U_TURN`) → clear `attacker->info[0x170]`. Purpose unknown, but unrelated to Hyper Beam. The same flag is also cleared in `ov29_0232393C` (reverse projectile motion) for move `0x232`. Setter for `info[0x170]` not yet found.
 
 ## PlayMoveAnimation
 
@@ -898,6 +906,34 @@ bool FUN_022bf160(ushort *params)
 ```
 
 If type 5 found, calls `FUN_0234ba54` to wait for screen readiness.
+
+## Hyper Beam Variants (Vestigial Mechanism)
+
+### IsHyperBeamVariant (`0x02324534`)
+
+```c
+bool IsHyperBeamVariant(move *m) {
+    // Returns true for: Frenzy Plant (238), Hydro Cannon (239),
+    // Hyper Beam (242), Blast Burn (272), Rock Wrecker (453),
+    // Giga Impact (455), Roar of Time (494)
+}
+```
+
+Called from exactly one site: `ExecuteMoveEffect:0x02332794`. The block does:
+
+```c
+if (move is Hyper Beam variant && param_4 == 0 && DungeonRandOutcomeUserAction(attacker, 0)) {
+(byte)0x0237CA68 = 1;  // dungeon-global flag
+}
+```
+
+The global byte at `0x0237CA68` has no known readers — XREFs show only the write site. **The mechanic is effectively a dead store**, likely vestigial scaffolding from an abandoned recharge implementation.
+
+### Recharge Mechanic in PMD: None
+
+PMD:EOS strips the recharge concept entirely for Hyper Beam variants. Confirmed from `DoMoveBlastBurn` (just `EndFrozenStatus` + `DealDamage(2.0×)`, no flag writes, no status changes). The other six variants follow the same pattern based on inline dispatch entries. No per-monster recharge state exists.
+
+For implementations that want a "must recharge" visual cue, this must be added externally — there is no ROM behavior to mirror.
 
 ## Cross-References
 

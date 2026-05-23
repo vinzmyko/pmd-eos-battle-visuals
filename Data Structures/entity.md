@@ -84,10 +84,9 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0x4C | uint8_t | direction | Facing direction (0-7) |
 | 0xAC | uint16_t | held_move_id | Currently selected move |
 | 0xB0 | uint32_t | some_id | Used in snatch check |
-| 0xD2 | uint8_t | charging_status | Two-turn move charge state |
-| 0x10B | uint8_t | some_flag | Various status checks |
+| 0x10B | uint8_t | two_turn_invincible | Untargetable flag during airborne/underwater charge: 1=airborne (Fly/Bounce/Sky Drop), 2=underground/underwater (Dig/Dive). Read by TwoTurnMoveForcedMiss for hit gating. |
 | 0x146 | uint32_t | some_value | Fixed point value (ceiling applied) |
-| 0x164 | uint8_t | flag | Cleared at start of move effect |
+| 0x170 | uint8_t | u_turn_flag | U-Turn-related (move 0x1F6). Cleared in ExecuteMoveEffect post-loop after U-Turn use, and in ov29_0232393C for move 0x232. Setter unknown. |
 | 0x166 | uint8_t | flag | Set when move misses |
 | 0x167 | uint8_t | flag | Related to move execution |
 | 0x170 | uint8_t | flag | Cleared for specific moves |
@@ -103,8 +102,9 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0xCD | uint8_t | freeze_damage_countdown | Damage tick countdown (constriction/wrap) |
 | 0xD0 | uint8_t | cringe_class_status | Cringe class (0=none, 1=cringe, 2=confused, 3=paused, 4=cowering, 5=taunted, 6=encore, 7=infatuated) |
 | 0xD1 | uint8_t | cringe_counter | Duration counter for cringe class |
-| 0xD2 | uint8_t | bide_class_status | Bide/two-turn status |
-| 0xD3 | uint8_t | bide_counter | Duration counter for bide |
+| 0xD2 | uint8_t | bide_class_status | Two-turn move charge class (see enum below) |
+| 0xD3 | uint8_t | bide_counter | Duration counter for bide-class statuses |
+| 0x154 | uint8_t | charge_active | Set to 1 alongside bide_class_status by FUN_02318bbc, cleared by FUN_02318d58 (except for values 1 and 12 which persist) |
 | 0xD5 | uint8_t | reflect_class_status | Reflect class (see status_icon_system.md for enum) |
 | 0xD6 | uint8_t | reflect_counter | Duration counter for reflect class |
 | 0xD7 | uint8_t | aqua_ring_counter | Aqua Ring heal tick counter (reflect class value 0x10) |
@@ -136,6 +136,26 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0x119-0x11D | uint8_t[5] | stat_stage_counters_2 | Speed/stat stage duration counters (set B) |
 | 0x150 | uint8_t | hunger_damage_flag | Set to 1 when hunger damage dealt this turn |
 | 0x210 | int16_t | hp_regen_accumulator | HP regen fractional accumulator |
+
+### bide_class_status Values (0xD2)
+
+Confirmed from `FUN_02318bbc` (universal charge setter) and the symbolized move handlers in `overlay_29_02328030.s`:
+
+| Value | Class | Move(s) | Behavior |
+|-------|-------|---------|----------|
+| 0 | None | — | Not charging |
+| 1 | Bide-class | Bide, Revenge, Avalanche | FUN_02318bbc takes special branch: sets 0xD3 counter, clears 0xB8, stores held move id at 0xAC. FUN_02318d58 preserves this state. |
+| 2 | Solar Beam-class | Solar Beam, presumably Razor Wind, Skull Bash, Focus Punch, Sky Attack | Standard two-turn charge. Cleared by FUN_02318d58 on release. |
+| 7 | Airborne | Fly | Sets `info[0x10B] = 1` (untargetable). |
+| 8 | Airborne | Bounce | Sets `info[0x10B] = 1`. |
+| 9 | Underwater | Dive | Sets `info[0x10B] = 2`. |
+| 10, 13 | Underground/underwater | Likely Dig, Shadow Force | Set `info[0x10B] = 2`. Specific move-to-value mapping unverified. |
+| 11 (0xB) | Charge (Electric) | Charge | Set by DoMoveCharge; also boosts SpA via BoostDefensiveStat(SPATK_STAT_IDX). Read by dead branch in IsChargingAnyTwoTurnMove. |
+| 12 (0xC) | Bide-like with duration | Unknown setter | FUN_02318bbc takes special branch (sets 0xD3 counter only). FUN_02318d58 preserves this state. |
+
+The full move-list-to-value mapping is also stored in tables:
+- `TWO_TURN_MOVES_AND_STATUSES` at `0x02352AAC` — `{move_id, charge_class}` pairs used by `IsChargingTwoTurnMove`
+- `TWO_TURN_STATUSES` at `0x02352A60` — flat list of valid charge class values used by `IsChargingAnyTwoTurnMove`
 
 ### Direction Values
 
