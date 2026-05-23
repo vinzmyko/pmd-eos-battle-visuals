@@ -131,6 +131,7 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0x104 | uint8_t | run_away_status | Flee state (1=type A, 2=type B, logged differently) |
 | 0x105 | uint8_t | run_away_counter | Duration counter for flee |
 | 0x106 | uint8_t | perish_song_counter | Perish Song countdown |
+| 0x108 | uint8_t | did_action_flag | Generic "user did something" tracker, set by Absorb, Skill Swap, Sketch, Item Swap, Role Play, and the Hyper Beam recharge handler. Reset/read elsewhere (TBD). |
 | 0x110 | int32_t | cached_speed_stage | Cached speed stage value, compared after counter expiry |
 | 0x114-0x118 | uint8_t[5] | stat_stage_counters | Speed/stat stage duration counters (set A) |
 | 0x119-0x11D | uint8_t[5] | stat_stage_counters_2 | Speed/stat stage duration counters (set B) |

@@ -907,7 +907,9 @@ bool FUN_022bf160(ushort *params)
 
 If type 5 found, calls `FUN_0234ba54` to wait for screen readiness.
 
-## Hyper Beam Variants (Vestigial Mechanism)
+## Hyper Beam Variant Recharge
+
+PMD implements the recharge as a 1-turn Paused status (`cringe_class_status = 3`) on the user, applied after a successful Hyper Beam variant use. The mechanism splits across two functions and a dungeon-global flag.
 
 ### IsHyperBeamVariant (`0x02324534`)
 
@@ -919,21 +921,34 @@ bool IsHyperBeamVariant(move *m) {
 }
 ```
 
-Called from exactly one site: `ExecuteMoveEffect:0x02332794`. The block does:
+### Write site: ExecuteMoveEffect
+
+Inside the inline dispatch block around `0x02332790`, before the indirect jumptable returns:
 
 ```c
-if (move is Hyper Beam variant && param_4 == 0 && DungeonRandOutcomeUserAction(attacker, 0)) {
-(byte)0x0237CA68 = 1;  // dungeon-global flag
+if (IsHyperBeamVariant(move) && param_4 == 0 && DungeonRandOutcomeUserAction(attacker, 0)) {
+    *(byte*)0x0237CA68 = 1;  // dungeon-global flag
 }
 ```
 
-The global byte at `0x0237CA68` has no known readers — XREFs show only the write site. **The mechanic is effectively a dead store**, likely vestigial scaffolding from an abandoned recharge implementation.
+### Read site: FUN_0232145c (per-monster move-execution wrapper)
 
-### Recharge Mechanic in PMD: None
+At the end of the function, after all dispatched moves have run:
 
-PMD:EOS strips the recharge concept entirely for Hyper Beam variants. Confirmed from `DoMoveBlastBurn` (just `EndFrozenStatus` + `DealDamage(2.0×)`, no flag writes, no status changes). The other six variants follow the same pattern based on inline dispatch entries. No per-monster recharge state exists.
+```c
+if (*(byte*)0x0237CA68 != 0) {
+    *(byte*)0x0237CA68 = 0;
+    int turns = CalcStatusDuration(user, DAT_02321a74, 1);  // 1 turn
+    TryInflictPausedStatus(user, user, 1, turns, 0, 0);     // self-inflict
+    if (user->info[0x108] == 0) user->info[0x108] = 1;
+}
+```
 
-For implementations that want a "must recharge" visual cue, this must be added externally — there is no ROM behavior to mirror.
+The global byte at `0x0237CA68` is referenced via two different literal pool entries (`DAT_023329dc` in ExecuteMoveEffect, `DAT_02321a54` in FUN_0232145c) — Ghidra's XREF search on one literal misses the other. The byte is genuinely read and acted upon.
+
+### Visual result
+
+Paused has effectively no visuals (per `status_visual_pipeline.md`): no application VFX, no sound, no overhead icon (cringe table index 3 is all zeros), no sprite change. The only player-visible effect is a log message and the next-turn action block via `MonsterCannotAttack`.
 
 ## Cross-References
 
