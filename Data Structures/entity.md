@@ -82,7 +82,7 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0x04 | int16_t | species_id | Monster species (used in FUN_023258ec) |
 | 0x10 | int16_t | current_hp | Current HP |
 | 0x4C | uint8_t | direction | Facing direction (0-7) |
-| 0xAC | uint16_t | held_move_id | Currently selected move |
+| 0xAC | uint16_t | held_move_id | Currently selected move. Set during normal move selection. For Bide-class charging (bide_class_status = 1), explicitly written by `FUN_02318bbc` to a constant move ID. For other charge classes (Solar Beam, Fly, etc.), inherited from normal move selection. Read by `func_0x01ffb658` (AI move decision) on turn 2 to auto-dispatch the release. |
 | 0xB0 | uint32_t | some_id | Used in snatch check |
 | 0x10B | uint8_t | two_turn_invincible | Untargetable flag during airborne/underwater charge: 1=airborne (Fly/Bounce/Sky Drop), 2=underground/underwater (Dig/Dive). Read by TwoTurnMoveForcedMiss for hit gating. |
 | 0x146 | uint32_t | some_value | Fixed point value (ceiling applied) |
@@ -104,7 +104,7 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0xD1 | uint8_t | cringe_counter | Duration counter for cringe class |
 | 0xD2 | uint8_t | bide_class_status | Two-turn move charge class (see enum below) |
 | 0xD3 | uint8_t | bide_counter | Duration counter for bide-class statuses |
-| 0x154 | uint8_t | charge_active | Set to 1 alongside bide_class_status by FUN_02318bbc, cleared by FUN_02318d58 (except for values 1 and 12 which persist) |
+| 0x154 | uint8_t | charge_active | Set to 1 alongside `bide_class_status` by `FUN_02318bbc` for ALL charge types (Bide, Solar Beam, Fly, Dig, etc.). Cleared by `FUN_02318d58` after move release, except for bide_class_status values 1 and 12 which persist across turns. |
 | 0xD5 | uint8_t | reflect_class_status | Reflect class (see status_icon_system.md for enum) |
 | 0xD6 | uint8_t | reflect_counter | Duration counter for reflect class |
 | 0xD7 | uint8_t | aqua_ring_counter | Aqua Ring heal tick counter (reflect class value 0x10) |
@@ -145,7 +145,7 @@ Confirmed from `FUN_02318bbc` (universal charge setter) and the symbolized move 
 | Value | Class | Move(s) | Behavior |
 |-------|-------|---------|----------|
 | 0 | None | — | Not charging |
-| 1 | Bide-class | Bide, Revenge, Avalanche | FUN_02318bbc takes special branch: sets 0xD3 counter, clears 0xB8, stores held move id at 0xAC. FUN_02318d58 preserves this state. |
+| 1 | Bide-class | Bide, Revenge, Avalanche | `FUN_02318bbc` takes special branch: sets 0xD3 counter, clears 0xB8, writes a constant move ID to `info[0xAC]`. `FUN_02318d58` preserves this state. Action is blocked every turn by `HasStatusThatPreventsActing` ("storing energy" message) until duration expires. |
 | 2 | Solar Beam-class | Solar Beam, presumably Razor Wind, Skull Bash, Focus Punch, Sky Attack | Standard two-turn charge. Cleared by FUN_02318d58 on release. |
 | 7 | Airborne | Fly | Sets `info[0x10B] = 1` (untargetable). |
 | 8 | Airborne | Bounce | Sets `info[0x10B] = 1`. |
@@ -157,6 +157,15 @@ Confirmed from `FUN_02318bbc` (universal charge setter) and the symbolized move 
 The full move-list-to-value mapping is also stored in tables:
 - `TWO_TURN_MOVES_AND_STATUSES` at `0x02352AAC` — `{move_id, charge_class}` pairs used by `IsChargingTwoTurnMove`
 - `TWO_TURN_STATUSES` at `0x02352A60` — flat list of valid charge class values used by `IsChargingAnyTwoTurnMove`
+
+**Action blocking semantics by charge class:**
+
+| Class | Action blocked? | Notes |
+|-------|----------------|-------|
+| 1 (Bide) | Yes | `HasStatusThatPreventsActing` returns true |
+| 2-13 (Solar Beam, Fly, Dig, etc.) | No | `func_0x01ffb658` auto-dispatches release using `info[0xAC]` |
+
+For classes 2-13, the monster's turn 2 action is forced to "use held move" by the AI decision function, which lives in ITCM at `0x01FFB658` and is not currently decompilable without loading the ITCM region.
 
 ### Direction Values
 
