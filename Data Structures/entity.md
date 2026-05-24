@@ -251,6 +251,9 @@ for (iVar6 = 0; iVar6 < 0x3f; iVar6++) {
 - Exact entity struct size
 - Animation control structure layout at entity + 0xB
 - How entity pools are organized for different entity types
+- `func_0x01ffb658` (AI move decision, ITCM `0x01FFB658`): inferred to auto-dispatch held move when `info[0xD2] != 0 && != 1`, but undecompilable without loading ITCM region into Ghidra. Verification requires either runtime debugger inspection (DeSmuME / No$GBA) or proper ITCM memory block setup.
+- Player-side turn-2 auto-dispatch: must exist in the player input path (the leader doesn't go through `RunMonsterAi`). Find via xrefs to `info[0xD2]` reads outside AI code.
+- `FUN_02318d58` (charge state clearer): inverse of `FUN_02318bbc`. Called after release animation completes, but exact call site within the move execution pipeline not yet documented.
 
 ## Functions Used
 

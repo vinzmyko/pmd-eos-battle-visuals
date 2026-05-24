@@ -1051,6 +1051,7 @@ To play either animation directly from a move ID, without going through the turn
 - Full purpose of animation category (flag bits 0-2)
 - What flag bit 5 controls
 - How layer 0 (charge) timing relates to two-turn moves
+- Exact ordering inside `FUN_02322374` of (a) charge state set via `FUN_02318bbc` and (b) animation lookup via `PlayMoveAnimation`. Empirically the charge animation plays on turn 1, implying the lookup happens before the state-set, but the call ordering hasn't been traced.
 
 ## Functions Used
 
