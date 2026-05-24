@@ -217,7 +217,7 @@ Specifies which sprite animation the attacking monster performs.
 | 486 | Seed Bomb |
 | 501 | Mud Bomb |
 | 504 | Worry Seed |
-| 543-546 | UNKNOWN (likely system/dummy entries) |
+| 543-560 | Alternative animation slots — see "Alternative Animation Block" below |
 
 > See `Systems/move_effect_pipeline.md` section "Special Monster Animation Types" for implementation details on types 98/99.
 
@@ -388,6 +388,47 @@ bool Is2TurnsMove(move_id move_id) {
     return false;
 }
 ```
+
+## Alternative Animation Block
+
+Entries `0x21F`–`0x230` (543-560) in `MOVE_ANIMATION_INFO` are the "alternative animation" block — used for two-turn move release animations, Weather Ball weather variants, and Snore/Sleep Talk fail animations. `GetMoveAnimationId` remaps a move ID to one of these slots when `should_play_alternative_animation` is true (or always for Weather Ball based on weather).
+
+### Full Mapping Table
+
+Verified from disassembly of `GetMoveAnimationId` at `0x02325B10`.
+
+| Move ID | Move (likely) | Default slot (charge/normal) | Alternative slot (release/variant) |
+|---------|---------------|------------------------------|-----------------------------------|
+| 0x08 | Dig | 0x08 | 0x223 |
+| 0x19 | Snore | 0x19 | 0x22D |
+| 0x3B-0x3C | (range) | self | 0x224 |
+| 0x4B | Sky Attack | 0x4B | 0x225 |
+| 0x64 | Skull Bash | 0x64 | 0x226 |
+| 0x97 | Solar Beam | 0x97 | 0x227 |
+| 0x99 | (unknown) | 0x99 | 0x228 |
+| 0x9C | (unknown) | 0x9C | 0x229 |
+| 0xCD | (unknown) | 0xCD | 0x22A |
+| 0xE3 | Sleep Talk | 0xE3 | 0x22E |
+| 0xEC-0xED | (range, includes Curse 0xED) | self | 0x22C |
+| 0x15C | (unknown) | 0x15C | 0x22B |
+| 0x1DD | (unknown) | 0x1DD | 0x230 |
+
+### Weather Ball Variants (Move 0x1F)
+
+| Weather | Alternative slot |
+|---------|------------------|
+| WEATHER_SUNNY | 0x21F |
+| WEATHER_RAIN | 0x221 |
+| WEATHER_SANDSTORM | 0x222 |
+| WEATHER_HAIL | 0x220 |
+| WEATHER_SNOW | 0x220 |
+| WEATHER_CLEAR / WEATHER_CLOUDY / WEATHER_FOG | default (0x1F) |
+
+### Storage
+
+The alternative slot IDs are stored as constants in a literal pool at `0x02325C44`-`0x02325C74` and referenced via PC-relative loads inside `GetMoveAnimationId`.
+
+> See `Systems/move_effect_pipeline.md` → "Two-Turn Move Animation Flow" for the runtime mechanism that switches between default and alternative slots.
 
 ## Special Move Cases
 
