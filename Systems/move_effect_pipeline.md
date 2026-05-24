@@ -950,6 +950,96 @@ The global byte at `0x0237CA68` is referenced via two different literal pool ent
 
 Paused has effectively no visuals (per `status_visual_pipeline.md`): no application VFX, no sound, no overhead icon (cringe table index 3 is all zeros), no sprite change. The only player-visible effect is a log message and the next-turn action block via `MonsterCannotAttack`.
 
+## Two-Turn Move Animation Flow
+
+Two-turn moves (Solar Beam, Sky Attack, Dig, Fly, etc.) use a single move ID but have two different animations: a charge animation on turn 1 and a release animation on turn 2. The switch is driven by the user's charge state and resolved at `PlayMoveAnimation` time via `GetMoveAnimationId`.
+
+### Complete Animation Lookup Pipeline
+
+```
+move_id
+  → GetMoveAnimationId(move_id, weather, alt_bool)        // optional remap for charge/weather variants
+  → animation_slot_id
+  → GetMoveAnimation(slot_id)                             // → move_animation entry (24 bytes)
+  → move_animation->field_0x4 (layer 2)                   // primary visual effect_id
+  → GetEffectAnimation(effect_id)                         // → effect_animation entry (28 bytes)
+  → effect_animation->file_index                          // WAN file in PACK_ARCHIVE_EFFECT
+  → effect_animation->anim_type                           // determines render method
+```
+
+### Charge State Switching
+
+`ShouldMovePlayAlternativeAnimation` returns true when the user is currently charging a two-turn move (or for Solar Beam in sun, which skips the charge). `GetMoveAnimationId` then remaps the move ID to its alternative slot.
+
+```c
+bVar5 = ShouldMovePlayAlternativeAnimation(user, move);
+apparent_weather = GetApparentWeather(user);
+uVar7 = GetMoveAnimationId(move_id, apparent_weather, bVar5);
+move_anim = GetMoveAnimation(uVar7);
+```
+
+`ShouldMovePlayAlternativeAnimation` ultimately calls `IsChargingTwoTurnMove`, which reads `info[0xD2]` (bide_class_status) and matches it against the move's expected charge class in the `TWO_TURN_MOVES_AND_STATUSES` table.
+
+### Full Solar Beam Example
+
+**Turn 1 (charge):**
+1. Player selects Solar Beam (move ID 0x97). Action dispatches normally.
+2. `FUN_02322374` runs. `info[0xAC]` (held_move_id) was set during normal move selection.
+3. Move handler eventually calls `FUN_02318bbc(param_3 = 2)` — sets `info[0xD2] = 2` (Solar Beam-class charge), `info[0x154] = 1` (charge_active).
+4. When `PlayMoveAnimation` runs, `IsChargingTwoTurnMove` returns false (state was set inside the move handler, after the animation lookup), so `ShouldMovePlayAlternativeAnimation` returns false.
+
+   **Important caveat:** the exact ordering of state-set vs animation-lookup inside `FUN_02322374` determines which animation plays on turn 1. Empirically the charge animation does play first, but the call ordering hasn't been fully traced.
+
+5. `GetMoveAnimationId(0x97, weather, false)` returns 0x97 unchanged.
+6. `MOVE_ANIMATION_INFO[0x97]` is the charge animation entry. Effect plays.
+
+**Turn 2 (release):**
+1. `RunMonsterAi` runs for the monster. `HasStatusThatPreventsActing` checks `info[0xD2] == 1` (Bide-class only) and does NOT block for Solar Beam (class 2).
+2. `func_0x01ffb658` (AI move decision, lives in ITCM at `0x01FFB658`) detects `info[0xD2] != 0 && != 1` and forces the action to USE_MOVE with `info[0xAC]` as the move.
+3. `ExecuteMonsterAction` dispatches the action. `FUN_02322374` runs again.
+4. This time `IsChargingTwoTurnMove` returns true (state is already set from turn 1).
+5. `ShouldMovePlayAlternativeAnimation` returns true.
+6. `GetMoveAnimationId(0x97, weather, true)` returns 0x227 (Solar Beam's alternative slot).
+7. `MOVE_ANIMATION_INFO[0x227]` is the release animation entry. Beam effect plays.
+8. After execution, `FUN_02318d58` clears `info[0xD2]` and `info[0x154]`.
+
+### Sunny Weather Exception
+
+For Solar Beam (0x97), `ShouldMovePlayAlternativeAnimation` returns true unconditionally when weather is sunny — there is no turn 1 charge. The release animation plays immediately on the only turn the move executes.
+
+### Cancellation Path
+
+If a charging monster becomes unable to act (frozen, paralyzed, cringed), `ExecuteMonsterAction` detects this via:
+
+```c
+if (MonsterCannotAttack(monster, '\0') && IsChargingAnyTwoTurnMove(monster, '\x01')) {
+    FUN_02318d58(...);  // Clear charge state
+}
+```
+
+The charge is cancelled without the release animation playing.
+
+### Implementation Notes for Client Recreation
+
+To play either animation directly from a move ID, without going through the turn pipeline:
+
+- **Charge animation only:** `GetMoveAnimation(move_id)` directly. Skip the remap.
+- **Release animation only:** look up the alternative slot from the mapping table in `Data Structures/move_animation_info.md` → "Alternative Animation Block", then `GetMoveAnimation(alt_slot_id)`.
+- **Full two-turn simulation:** set `monster_info[0xD2]` to the move's expected charge class (see `entity.md` → bide_class_status enum) and `monster_info[0xAC]` to the move ID before calling the animation pipeline a second time for release.
+
+### Functions Used
+
+| Function | Address (NA) | Purpose |
+|----------|--------------|---------|
+| `GetMoveAnimationId` | `0x02325B10` | Remaps move_id → animation slot based on weather/charging |
+| `ShouldMovePlayAlternativeAnimation` | — | Returns true if alternative animation should play |
+| `IsChargingTwoTurnMove` | — | Reads `info[0xD2]` and matches against move's expected charge class |
+| `IsChargingAnyTwoTurnMove` | — | True if user is charging any two-turn move (no move arg needed) |
+| `FUN_02318bbc` | `0x02318bbc` | Charge state setter (writes `info[0xD2]`, `info[0x154]`, and for Bide-class only, `info[0xAC]`) |
+| `FUN_02318d58` | `0x02318d58` | Charge state clearer (inverse of `FUN_02318bbc`) |
+| `func_0x01ffb658` | `0x01FFB658` | AI move decision (ITCM, undecompiled) — performs turn-2 auto-dispatch |
+| `HasStatusThatPreventsActing` | — | Returns true for `info[0xD2] == 1` (Bide), false for classes 2-13 |
+
 ## Cross-References
 
 > See `Systems/projectile_motion.md` for projectile spawn positions and motion handling
