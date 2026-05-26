@@ -459,7 +459,7 @@ if ((uVar11 == 6 || sVar4 == (status_burn_id_8)0x4) || uVar11 == 2) {
 
 **Full frozen visual:** sprite halts on current frame (no tremble) + SMA ice overlay (anim 4, persistent) rendered at Centre attachment point + thaw plays one-shot effect 0x18 (24) on cure.
 
-**Sleep animation:** Still unconfirmed whether a similar mechanism forces the sleep pose (group 5). The frame-halt block only checks `freeze`, not `sleep`. Sleep pose forcing likely lives elsewhere — possibly in the animation ID selection logic earlier in `FUN_02303f18` via the `field_0x61` / `GetIdleAnimationId` path. Needs further investigation.
+**Sleep animation (CONFIRMED):** Sleep pose is forced via `GetIdleAnimationId`, not via frame-halt. When `info[0xBD]` is 1 (sleep), 3 (nightmare), or 5 (napping), `GetIdleAnimationId` returns anim ID `5` instead of the default `7`. `FUN_02303f18` reads the current idle ID from `field_0x61`/`GetIdleAnimationId` near the top of the function and writes it to `info + 0xAE`, then the sprite plays anim 5 normally (frames still advance — sleep is NOT frozen in place like freeze/petrified). Special case: Sudowoodo (species `0xB9`) with `sleep_counter == 0x7F` returns anim `7` (idle) instead — likely the "pretending to be a rock" behavior.
 
 **Source:** Ghidra decompilation of `FUN_02303f18`, confirmed by in-game testing.
 

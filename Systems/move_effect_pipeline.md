@@ -1027,6 +1027,19 @@ To play either animation directly from a move ID, without going through the turn
 - **Release animation only:** look up the alternative slot from the mapping table in `Data Structures/move_animation_info.md` → "Alternative Animation Block", then `GetMoveAnimation(alt_slot_id)`.
 - **Full two-turn simulation:** set `monster_info[0xD2]` to the move's expected charge class (see `entity.md` → bide_class_status enum) and `monster_info[0xAC]` to the move ID before calling the animation pipeline a second time for release.
 
+### Between-Turn Visual Behavior
+
+While the user is charging (turn 1 has resolved, waiting for turn 2 to release), the visual state is minimal:
+
+- **Sprite pose:** Returns to normal idle (anim 7) via `GetIdleAnimationId`. Only Bide-class (`info[0xD2] == 1`) uses a special "storing energy" pose (anim 11). Solar Beam, Sky Attack, Razor Wind, Focus Punch, Skull Bash, Fly, Bounce, Dig, Dive all use normal idle.
+- **Sprite frames:** Continue advancing. `FUN_02303f18`'s frame-halt block only stops frames for `freeze == 1` (frozen) or `freeze == 6` (petrified). Charge state is not checked.
+- **Charge VFX:** One-shot. The Layer 0 effect spawned by `FUN_022bfaa8` plays through its animation on turn 1 (awaited inside `FUN_02324e78`), then auto-terminates via the `FUN_022bf4f0` tick when its animation ends. `FUN_02318d58` does not kill any VFX on release because there is nothing to kill.
+- **Sprite/shadow hiding:**
+  - `info[0x10B] == 2` (Dig, Dive, Shadow Force): `FUN_02303f18` gates the sprite-draw block on `0x10B != 2`. Sprite is not drawn. Shadow render (`FUN_02303e5c`) is outside this gate — may still draw, controlled separately by `monster->display_shadow`.
+  - `info[0x10B] == 1` (Fly, Bounce, Sky Drop): NOT hidden by the renderer. Mechanism for airborne hiding unknown — likely an `elevation` or `pixel_pos.y` offset set by the move handler. See `entity.md` → Open Questions.
+- **Status icon:** `UpdateStatusIconFlags` is called by `FUN_02318bbc` at charge start. For Bide-class only, the SMA icon system displays a persistent overhead icon while `info[0xD2] == 1`. Other charge classes have no persistent icon in PMD — the only visual cue is the log message printed at charge start.
+- **Implementation note for client recreation:** PMD's between-turn presentation is minimal and arguably under-communicated for non-Bide charges. Modern equivalents typically add a looping aura VFX, a charge indicator above the head, or a target tile telegraph for player readability.
+
 ### Functions Used
 
 | Function | Address (NA) | Purpose |
