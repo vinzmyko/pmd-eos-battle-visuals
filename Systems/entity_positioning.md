@@ -323,6 +323,8 @@ Writes entity position and attachment offset into the effect context.
 
 **Semantic pattern:** directions 3/4/5 (the "away-facing" upward directions) produce a Z offset of -1, placing the effect behind the entity. All other directions produce +1, placing the effect in front. This matches the expected behaviour of a charge effect anchored to the attacker's back — it renders behind when the attacker faces away from the camera and in front when facing toward it.
 
+**Empirical note (render reality):** the ±1 above is the value written to `effect_context + 0x2C`, which the meta-frame renderer never reads (confirmed via `FUN_0201b6d4` disassembly — see `meta_frame_rendering.md`). ROM observation of Solar Beam's charge (effect 247, `attachment_point = -1`, anchored at the entity origin) shows it renders **behind the attacker in all 8 directions**, not front-when-facing-down. On-screen layering is Y-sort only; the directional table does not flip charge front/back. A client should render ground-anchored charge effects behind the entity unconditionally rather than driving z from this table.
+
 **Evidence:** `FUN_022bfb6c` at `0x022bfbf4` loads the pointer, then `ldmia r6!, {r0-r3}` + `ldmia r6, {r0-r3}` at `0x022bfbfc-0x022bfc08` reads all 8 entries (32 bytes) into a stack buffer before indexing with `param_5 & 7`. Confirmed table contents via direct memory inspection at `0x022C7890`.
 
 **Branch gate:** The directional path is only taken when `(effect_context + 0x10) & 7 == 0`. In practice this is always true for WAN-backed effects because `+0x10` (wan_ptr) is pointer-aligned. Note this gate is checked **after** the bind_type 6 short-circuit — primaries skip the gate entirely.

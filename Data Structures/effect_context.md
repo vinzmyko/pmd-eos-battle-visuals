@@ -201,7 +201,7 @@ Despite the name, this field is **not** the DS OAM priority (attr2 bits 10-11). 
 
 See `Systems/meta_frame_rendering.md` for the full OAM submission pipeline.
 
-**Where +0x2C IS consumed:** not in the render path. Likely consumers are visibility culling, effect tick dispatch order, or higher-level scene management. The ±1 directional nudge from the DIRECTION_Z_TABLE at `0x022C7890` implies it's used for a sort/compare somewhere, but that call site is outside the meta-frame renderer. **Open question** — see below.
+**Where +0x2C IS consumed:** not in the render path — confirmed by full disassembly of `FUN_0201b6d4`. The OAM bucket index is computed as `param_3[3]` (sprite base screen Y) `+ piece Y offset`, clamped to `[0, 0x13F]`; the effect context is never passed into the renderer, so +0x2C cannot be read there. Likely consumers are visibility culling, effect tick dispatch order, or higher-level scene management. The ±1 directional nudge from the DIRECTION_Z_TABLE at `0x022C7890` implies it's used for a sort/compare somewhere, but that call site is outside the meta-frame renderer and remains unlocated. **Open question** — see below.
 
 ## Projectile Trajectory Fields (0x128-0x134)
 
@@ -348,7 +348,7 @@ void FUN_022bdfc0(int param_1, ...)
 - Complete layout between offsets 0xAC-0xE4
 - Screen effect control structure details (offset 0xE8)
 - Purpose of flags bits 1-31 (only bit 0 is known)
-- Where `effect_context + 0x2C` (z_priority) is actually read. Written by `FUN_022bfb6c`, but `FUN_0201c5c4` and `FUN_0201b6d4` (the meta-frame renderer chain) never read it. Suspected consumers: culling, tick order, or scene-level sort — not meta-frame submission.
+- Where `effect_context + 0x2C` (z_priority) is actually read. Written by `FUN_022bfb6c`. Confirmed via full disassembly that the meta-frame renderer chain (`FUN_0201c5c4` → `FUN_0201b6d4` → `FUN_0200b6f0`) never reads it — `FUN_0201b6d4` derives the OAM bucket purely from `base_Y + piece_Y`. The actual consumer (culling, tick order, or scene-level sort) is still unlocated.
 
 ## Functions Used
 

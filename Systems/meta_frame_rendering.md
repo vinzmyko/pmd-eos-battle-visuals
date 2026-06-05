@@ -161,14 +161,22 @@ Each new entry is head-inserted into its bucket. **Entries within the same bucke
 
 ### Bucket Index = Y Coordinate
 
-The `bucket_idx` parameter comes from `FUN_0201b6d4`'s `iVar12`, computed from `piece[3]` (the Y field of the piece). It is clamped to `[0, 0x13F]` = `[0, 319]` at `0x0201b754-0x0201b758`:
+The `bucket_idx` parameter is `FUN_0201b6d4`'s `iVar12`, computed as `param_3[3]` (the sprite's base screen Y, a render param) plus the piece's parsed Y byte from `FUN_0201b678` (`local_2f`):
+
+```
+ldrh  r7, [r6, #0x6]      ; r7 = param_3[3] (sprite base Y)
+ldrsb r0, [sp, #local_2f] ; parsed piece Y offset
+adds  r7, r7, r0          ; bucket = base_Y + piece_Y
+```
+
+It is then clamped to `[0, 0x13F]` = `[0, 319]` at `0x0201b754-0x0201b758`:
 
 ```
 cmp r7, #0x140            ; 320
 ldrge r7, [DAT_0201b9ac]  ; clamp to 0x13F (319)
 ```
 
-The clamp range of 0-319 accommodates sprites positioned above or below the 192px DS screen during scrolling.
+The clamp range of 0-319 accommodates sprites positioned above or below the 192px DS screen during scrolling. Note `param_3[3]` is a render parameter, NOT meta-frame `piece[3]` (the flags word); the bucket is driven by screen Y, never by `effect_context + 0x2C`.
 
 ## OAM Override Mask
 
