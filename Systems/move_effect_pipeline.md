@@ -1026,6 +1026,12 @@ To play either animation directly from a move ID, without going through the turn
 - **Charge animation only:** `GetMoveAnimation(move_id)` directly. Skip the remap.
 - **Release animation only:** look up the alternative slot from the mapping table in `Data Structures/move_animation_info.md` → "Alternative Animation Block", then `GetMoveAnimation(alt_slot_id)`.
 - **Full two-turn simulation:** set `monster_info[0xD2]` to the move's expected charge class (see `entity.md` → bide_class_status enum) and `monster_info[0xAC]` to the move ID before calling the animation pipeline a second time for release.
+- **Vanish/elevation model (move-agnostic):** factor the ROM implementation into primitives that never reference the move ID — the move only selects a *mode*.
+  - State: `charge` (move + slot + optional turns) [`0xD2`/`0xD4`/`0xD3`/`0xAC`]; `vanish_mode` ∈ {None, Airborne, Submerged} [`0x10B` = 0/1/2]; `elevation_px` (ramped, nonzero only when Airborne) [`0x188`].
+  - Per-frame tick (all entities): `target = Airborne ? APEX : 0`; `+RISE`/frame up, `−FALL`/frame down, clamp. Render at `y − elevation`; if Submerged, skip sprite + hide shadow. ROM values: RISE 8 px, FALL 12 px, APEX 200 px (`0x800`/`0xC00`/`0xC800`).
+  - Charge start: set `charge` + `vanish_mode` from the move's declared mode, SFX, log. Release: damage, clear `charge`, `vanish_mode = None` → elevation auto-descends.
+  - Targetability: `untargetable = vanish_mode != None && !move.hits_through(vanish_mode)`. `hits_through` is the only per-move data you author (e.g. Smack Down / Thousand Arrows / Gust / Thunder vs Airborne; Earthquake / Magnitude vs Dig; Surf / Whirlpool vs Dive; plus No Guard / Lock-On overrides).
+  - Diverge-from-ROM forks: ROM hard-blocks the turn during the rise (`FUN_02318ad4`) — you can animate the rise across the turn transition instead. ROM hides Airborne only by raising the sprite past the viewport and culling — if your camera/zoom differs, hide Airborne with an explicit flag too. Submerged is a true draw-skip and ports resolution-independently as-is.
 
 ### Between-Turn Visual Behavior
 
@@ -1034,11 +1040,55 @@ While the user is charging (turn 1 has resolved, waiting for turn 2 to release),
 - **Sprite pose:** Returns to normal idle (anim 7) via `GetIdleAnimationId`. Only Bide-class (`info[0xD2] == 1`) uses a special "storing energy" pose (anim 11). Solar Beam, Sky Attack, Razor Wind, Focus Punch, Skull Bash, Fly, Bounce, Dig, Dive all use normal idle.
 - **Sprite frames:** Continue advancing. `FUN_02303f18`'s frame-halt block only stops frames for `freeze == 1` (frozen) or `freeze == 6` (petrified). Charge state is not checked.
 - **Charge VFX:** One-shot. The Layer 0 effect spawned by `FUN_022bfaa8` plays through its animation on turn 1 (awaited inside `FUN_02324e78`), then auto-terminates via the `FUN_022bf4f0` tick when its animation ends. `FUN_02318d58` does not kill any VFX on release because there is nothing to kill.
-- **Sprite/shadow hiding:**
-  - `info[0x10B] == 2` (Dig, Dive, Shadow Force): `FUN_02303f18` gates the sprite-draw block on `0x10B != 2`. Sprite is not drawn. Shadow render (`FUN_02303e5c`) is outside this gate — may still draw, controlled separately by `monster->display_shadow`.
-  - `info[0x10B] == 1` (Fly, Bounce, Sky Drop): NOT hidden by the renderer. Mechanism for airborne hiding unknown — likely an `elevation` or `pixel_pos.y` offset set by the move handler. See `entity.md` → Open Questions.
+- **Sprite/shadow hiding** (fully traced — see "Two-Turn Vanish & Elevation Mechanism" below):
+  - `info[0x10B] == 2` (Dig, Dive, Shadow Force): `FUN_02303f18` gates the sprite-draw call (`FUN_0201cf5c`) on `0x10B != 2`. Sprite is not drawn — a hard draw-skip. Shadow render (`FUN_02303e5c`) is outside the gate and no-ops separately when `monster->display_shadow == 0`.
+  - `info[0x10B] == 1` (Fly, Bounce, Sky Drop): NOT a draw-skip. The sprite is raised off-screen via the `info[0x188]` elevation offset (subtracted from draw-Y) and dropped by `ShouldDisplayEntity`'s viewport cull. Rise/fall is animated per-frame by `FUN_023046e8`.
 - **Status icon:** `UpdateStatusIconFlags` is called by `FUN_02318bbc` at charge start. For Bide-class only, the SMA icon system displays a persistent overhead icon while `info[0xD2] == 1`. Other charge classes have no persistent icon in PMD — the only visual cue is the log message printed at charge start.
 - **Implementation note for client recreation:** PMD's between-turn presentation is minimal and arguably under-communicated for non-Bide charges. Modern equivalents typically add a looping aura VFX, a charge indicator above the head, or a target tile telegraph for player readability.
+
+### Two-Turn Vanish & Elevation Mechanism
+
+Full lifecycle for the five *relocating* two-turn moves (Fly, Bounce, Dive, Dig, Shadow Force). In-place chargers (Solar Beam, Sky Attack, Razor Wind, Focus Punch, Skull Bash, Charge) never set `info[0x10B]` and stay visible/targetable.
+
+Two fields drive everything, both keyed off the charge — not the move ID:
+- `info[0x10B]` (`two_turn_move_invincible`): `0`=none, `1`=airborne, `2`=submerged. Drives both the hit gate and the hide mode.
+- `info[0x188]` (`airborne_elevation`): 8.8-fixed vertical render offset, only used when airborne.
+
+**Setter — `FUN_02318bbc(user, recipient, class, &move_list[slot], msg)`** (turn 1, when not yet charging):
+1. Writes `info[0xD2] = class`, `info[0x154] = 1`.
+2. Scans `info[0x124 + i*8]` (4 move slots) for the entry matching the move pointer; stores its index in `info[0xD4]`.
+3. Class → `0x10B`: `(class−7)&0xFF < 2` (Fly 7 / Bounce 8) → `1`; class ∈ {9 Dive, 0xA Dig, 0xD Shadow Force} → `2`; everything else leaves `0x10B` at 0.
+4. Bide (1) / Bide-like (0xC) additionally set the `info[0xD3]` duration counter (Bide also clears `0xB8` and writes the held-move constant to `info[0xAC]`).
+5. `FUN_022e41b0(recipient, airborne?)` — plays the fly-up SFX only (no state writes).
+6. Logs the charge message, calls `UpdateStatusIconFlags`, then `FUN_02318ad4`.
+
+**Rise-wait — `FUN_02318ad4`** (last call in the setter): for airborne only, blocks the turn pumping `AdvanceFrame('S')` until `info[0x188] ≥ 0xC800` (capped at 400 frames). Returns immediately otherwise.
+
+**Per-frame lerp — `FUN_023046e8`** (called each frame from `FUN_02303f18`):
+- Bails if `info[0x172]` (pitfall flag) is set.
+- `info[0x10B] == 1`: `info[0x188] += 0x800`, clamp `0xC800` (8 px/frame up, ~25 frames).
+- otherwise: `info[0x188] -= 0xC00`, clamp `0` (12 px/frame down, ~17 frames).
+
+So the descent is self-driven off `0x10B` — the setter raises nothing directly; this ticker owns both the rise and the fall.
+
+**Renderer — `FUN_02303f18`:** `draw_y = (pixel_pos.y − entity[0x1C] − info[0x188]) >> 8`. The sprite-draw call `FUN_0201cf5c` is inside `if (info[0x10B] != 2)`, so submerged = hard draw-skip. Airborne is not special-cased — it climbs out of the viewport via `0x188` and is culled by `ShouldDisplayEntity`. Shadow draw (`FUN_02303e5c`) is outside the gate and obeys `display_shadow`.
+
+**Hit gate — `TwoTurnMoveForcedMiss`:** reads `info[0x10B]`; nonzero → miss, with carve-outs. Airborne (1): moves `0x88`/`0xA2`/`0x39`/`0x40` hit (Gust/Thunder/Twister/Sky-Uppercut set). Submerged (2): reads `info[0xD2]` to split Dive (9 → `0x20`/`0xDB` hit, Surf/Whirlpool) from Dig (0xA → `0x76`/`0x128` hit, plus Nature Power `0x77` when it resolves to `0x76`). Decode the raw IDs against your move table.
+
+**Clearer — `FUN_02318d58`** (turn 2, after `DealDamage`): clears `info[0xD2]`/`0x154`/`0x10B`, except when `0xD2` is 1 (Bide) or 0xC (Bide-like) which expire on the duration counter instead. Calls `UpdateStatusIconFlags`. Does **not** touch `info[0x188]`, so the landing animates via the ticker.
+
+**Handler pattern (`DoMoveFly`/`Dig`/`Dive`/`ShadowForce`):**
+```c
+if (!IsChargingTwoTurnMove(attacker, move)) {   // turn 1
+    FUN_02318bbc(attacker, attacker, CLASS, move, msg);   // begin charge
+} else {                                          // turn 2
+    DealDamage(attacker, defender, move, mult, item);
+    FUN_02318d58(attacker, ...);                  // end charge -> animated landing
+}
+```
+Classes: Fly 7, Bounce 8, Dive 9, Dig 0xA, Shadow Force 0xD. Shadow Force passes `defender` as the recipient — see anomaly in `entity.md` Open Questions.
+
+### Functions Used
 
 ### Functions Used
 
@@ -1048,10 +1098,19 @@ While the user is charging (turn 1 has resolved, waiting for turn 2 to release),
 | `ShouldMovePlayAlternativeAnimation` | — | Returns true if alternative animation should play |
 | `IsChargingTwoTurnMove` | — | Reads `info[0xD2]` and matches against move's expected charge class |
 | `IsChargingAnyTwoTurnMove` | — | True if user is charging any two-turn move (no move arg needed) |
-| `FUN_02318bbc` | `0x02318bbc` | Charge state setter (writes `info[0xD2]`, `info[0x154]`, and for Bide-class only, `info[0xAC]`) |
-| `FUN_02318d58` | `0x02318d58` | Charge state clearer (inverse of `FUN_02318bbc`) |
+| `FUN_02318bbc` | `0x02318bbc` | Charge setter: `0xD2`/`0x154`/`0x10B`/`0xD4`; Bide also `0xD3`/`0xB8`/`0xAC`. Class→`0x10B` rule above |
+| `FUN_02318d58` | `0x02318d58` | Charge clearer: `0xD2`/`0x154`/`0x10B` (preserves Bide 1 / Bide-like 0xC); leaves `0x188` for the animated landing |
+| `FUN_02318ad4` | `0x02318ad4` | Airborne rise-wait; blocks the turn until `info[0x188] ≥ 0xC800` |
+| `FUN_022e41b0` | `0x022e41b0` | Plays fly-up SFX if airborne (no state writes) |
+| `FUN_023046e8` | `0x023046e8` | Per-frame `info[0x188]` elevation lerp (rise `+0x800` / fall `−0xC00`, clamp 0..0xC800) |
+| `FUN_02303f18` | `0x02303f18` | Per-entity render tick; draw-Y uses `0x188`, sprite gated on `0x10B != 2` |
+| `FUN_02303e5c` | `0x02303e5c` | Shadow renderer; no-ops when `display_shadow == 0` |
+| `FUN_0201cf5c` | `0x0201cf5c` | Sprite-draw call, gated out by the `0x10B == 2` submerged check |
+| `TwoTurnMoveForcedMiss` | — | Hit gate; reads `0x10B` (+`0xD2` for submerged) with per-move exceptions |
+| `FUN_022e6e80` | `0x022e6e80` | Per-frame attached-effect follower (keeps move VFX glued to the entity); unrelated to elevation |
 | `func_0x01ffb658` | `0x01FFB658` | AI move decision (ITCM, undecompiled) — performs turn-2 auto-dispatch |
 | `HasStatusThatPreventsActing` | — | Returns true for `info[0xD2] == 1` (Bide), false for classes 2-13 |
+| `DoMoveFly` / `DoMoveDig` / `DoMoveDive` / `DoMoveShadowForce` | — | Charge-or-release handlers (classes 7 / 0xA / 9 / 0xD) |
 
 ## Cross-References
 
