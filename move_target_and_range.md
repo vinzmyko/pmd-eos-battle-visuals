@@ -1,5 +1,3 @@
-## Commit 1: Create `move_target_and_range.md`
-
 # Move Target and Range
 
 ## Summary
