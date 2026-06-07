@@ -75,6 +75,10 @@ int screen_y = entity->pixel_pos.y >> 8;
 
 When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to monster-specific data.
 
+> **Mapping to the pmdsky-debug `statuses` struct:** `statuses` is embedded at `info + 0xA9`, so `info_offset = 0xA9 + struct_offset`. Verified: `statuses.bide` 0x29 → `info[0xD2]`; `statuses.two_turn_move_invincible` 0x62 → `info[0x10B]`; `statuses.bide_move_slot` 0x2B → `info[0xD4]`; `sleep` 0x14 → `info[0xBD]`; `burn` 0x16 → `info[0xBF]`; `cringe` 0x27 → `info[0xD0]`.
+
+> **RE note:** the dungeon overlay accesses `monster_info` almost entirely through untyped `int`/`undefined*` bases plus literal offsets (e.g. `*(char*)(iVar7 + 0x10b)`), so Ghidra's struct-field xref misses nearly every combat/movement writer — it only catches spawn/reset paths where the `monster*` type was recovered. To find a field's writers, scan the listing for the literal displacement (`#0xNN`), search the relevant scalar constant, or set a runtime write-watchpoint. Field xref alone will give false negatives.
+
 ### Known Offsets
 
 | Offset | Type | Field | Description |
@@ -84,7 +88,8 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0x4C | uint8_t | direction | Facing direction (0-7) |
 | 0xAC | uint16_t | held_move_id | Currently selected move. Set during normal move selection. For Bide-class charging (bide_class_status = 1), explicitly written by `FUN_02318bbc` to a constant move ID. For other charge classes (Solar Beam, Fly, etc.), inherited from normal move selection. Read by `func_0x01ffb658` (AI move decision) on turn 2 to auto-dispatch the release. |
 | 0xB0 | uint32_t | some_id | Used in snatch check |
-| 0x10B | uint8_t | two_turn_invincible | Untargetable flag during airborne/underwater charge: 1=airborne (Fly/Bounce/Sky Drop), 2=underground/underwater (Dig/Dive). Read by `TwoTurnMoveForcedMiss` for hit gating. Also read by the renderer `FUN_02303f18`: when value is **2**, the entire sprite-draw block (`FUN_0201cf5c`) is gated off — sprite is not drawn. Value **1** does NOT gate the sprite; airborne sprite hiding must use a different mechanism (likely `entity->elevation` or `pixel_pos.y` offset set by the move handler, not yet traced). `FUN_022e8270` reads it only to skip the tremble offset for value 2. |
+| 0x10B | uint8_t | two_turn_move_invincible | Vanish + pseudo-invincibility flag for a relocating two-turn move. `0`=none, `1`=airborne (Fly/Bounce/Sky Drop), `2`=submerged (Dig/Dive/Shadow Force). Set by `FUN_02318bbc` at charge start, cleared by `FUN_02318d58` on release. Read by `TwoTurnMoveForcedMiss` for hit gating. Renderer `FUN_02303f18` gates the sprite-draw call (`FUN_0201cf5c`) on `!= 2`, so value `2` is hidden by a hard draw-skip. Value `1` is NOT a draw-skip — the airborne sprite is raised off-screen via `info[0x188]` and culled by `ShouldDisplayEntity`. `FUN_022e8270` reads it only to skip the tremble offset for value 2. (= `statuses.two_turn_move_invincible`, struct 0x62.) |
+| 0x188 | int32_t | airborne_elevation | Vertical render offset (8.8 fixed) for the airborne rise. Subtracted from draw-Y in `FUN_02303f18`: `draw_y = (pixel_pos.y − entity[0x1C] − info[0x188]) >> 8`, so larger = drawn higher. Ramped per-frame by `FUN_023046e8`: `+0x800`/frame while `info[0x10B] == 1` (clamp `0xC800` ≈ 200 px, ~25 frames), `−0xC00`/frame otherwise (clamp 0, ~17 frames). Only ever nonzero for Fly/Bounce. Hard-zeroed at spawn (`InitMonster`) and floor reset (`FUN_022e0434`); NOT touched by `FUN_02318d58`, so the landing animates. (`monster->field_0x188`, occupies 0x188–0x18B as a u32.) |
 | 0x146 | uint32_t | some_value | Fixed point value (ceiling applied) |
 | 0x170 | uint8_t | u_turn_flag | U-Turn-related (move 0x1F6). Cleared in ExecuteMoveEffect post-loop after U-Turn use, and in ov29_0232393C for move 0x232. Setter unknown. |
 | 0x166 | uint8_t | flag | Set when move misses |
@@ -104,6 +109,7 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0xD1 | uint8_t | cringe_counter | Duration counter for cringe class |
 | 0xD2 | uint8_t | bide_class_status | Two-turn move charge class (see enum below). Also read by `GetIdleAnimationId`: returns idle anim ID `0xB` (anim 11) when value is **1** (Bide-class only); all other values return `0x7` (normal idle anim 7). Solar Beam, Fly, Dig, etc. (values 2–13) use the normal idle pose between turns. `FUN_02303f18`'s frame-halt block does NOT check `0xD2`, so the sprite continues animating normally during charge. |
 | 0xD3 | uint8_t | bide_counter | Duration counter for bide-class statuses |
+| 0xD4 | uint8_t | charging_move_slot | Move-list slot (0–3) of the move being charged. Set by `FUN_02318bbc`, which scans the four 8-byte entries at `info[0x124 + slot*8]` and stores the slot whose address matches the move pointer it was handed (the pointer passed in is `&move_list[slot]`). Used to re-fire the right slot on the release turn. (= `statuses.bide_move_slot`, struct 0x2B.) |
 | 0x154 | uint8_t | charge_active | Set to 1 alongside `bide_class_status` by `FUN_02318bbc` for ALL charge types (Bide, Solar Beam, Fly, Dig, etc.). Cleared by `FUN_02318d58` after move release, except for bide_class_status values 1 and 12 which persist across turns. |
 | 0xD5 | uint8_t | reflect_class_status | Reflect class (see status_icon_system.md for enum) |
 | 0xD6 | uint8_t | reflect_counter | Duration counter for reflect class |
@@ -142,17 +148,20 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 
 Confirmed from `FUN_02318bbc` (universal charge setter) and the symbolized move handlers in `overlay_29_02328030.s`:
 
-| Value | Class | Move(s) | Behavior |
-|-------|-------|---------|----------|
-| 0 | None | — | Not charging |
-| 1 | Bide-class | Bide, Revenge, Avalanche | `FUN_02318bbc` takes special branch: sets 0xD3 counter, clears 0xB8, writes a constant move ID to `info[0xAC]`. `FUN_02318d58` preserves this state. Action is blocked every turn by `HasStatusThatPreventsActing` ("storing energy" message) until duration expires. |
-| 2 | Solar Beam-class | Solar Beam, presumably Razor Wind, Skull Bash, Focus Punch, Sky Attack | Standard two-turn charge. Cleared by FUN_02318d58 on release. |
-| 7 | Airborne | Fly | Sets `info[0x10B] = 1` (untargetable). |
-| 8 | Airborne | Bounce | Sets `info[0x10B] = 1`. |
-| 9 | Underwater | Dive | Sets `info[0x10B] = 2`. |
-| 10, 13 | Underground/underwater | Likely Dig, Shadow Force | Set `info[0x10B] = 2`. Specific move-to-value mapping unverified. |
-| 11 (0xB) | Charge (Electric) | Charge | Set by DoMoveCharge; also boosts SpA via BoostDefensiveStat(SPATK_STAT_IDX). Read by dead branch in IsChargingAnyTwoTurnMove. |
-| 12 (0xC) | Bide-like with duration | Unknown setter | FUN_02318bbc takes special branch (sets 0xD3 counter only). FUN_02318d58 preserves this state. |
+| Value | Class | Move(s) | Sets `0x10B` | Behavior |
+|-------|-------|---------|--------------|----------|
+| 0 | None | — | — | Not charging |
+| 1 | Bide-class | Bide, Revenge, Avalanche | no | `FUN_02318bbc` special branch: sets 0xD3 counter, clears 0xB8, writes a constant move ID to `info[0xAC]`. Cleared on duration expiry, not by `FUN_02318d58`. Action blocked each turn by `HasStatusThatPreventsActing` ("storing energy"). |
+| 2–6 | In-place chargers | Solar Beam (2), Sky Attack (3), Razor Wind (4), Focus Punch (5), Skull Bash (6) | no | Charge in place. **Stay fully visible and targetable.** Cleared by `FUN_02318d58` on release. |
+| 7 | Airborne | Fly | **1** | Animated rise via `info[0x188]`. From `DoMoveFly`. |
+| 8 | Airborne | Bounce | **1** | Animated rise via `info[0x188]`. |
+| 9 | Submerged | Dive | **2** | Hard draw-skip. From `DoMoveDive`. |
+| 10 (0xA) | Submerged | Dig | **2** | Hard draw-skip. From `DoMoveDig`. |
+| 11 (0xB) | Charge (Electric) | Charge | no | Boosts SpA via `BoostDefensiveStat(SPATK_STAT_IDX)`. Read by a dead branch in `IsChargingAnyTwoTurnMove`. |
+| 12 (0xC) | Bide-like with duration | Unknown setter | no | `FUN_02318bbc` special branch (sets 0xD3 only). `FUN_02318d58` preserves this state. |
+| 13 (0xD) | Submerged | Shadow Force | **2** | Hard draw-skip. From `DoMoveShadowForce` — but that handler passes `defender` as the status recipient, applying the charge to the *target*; won't round-trip through `IsChargingTwoTurnMove(attacker,…)`. Likely buggy/vestigial or mislabeled (Irdkwia's notes). Confirm in-game. |
+
+**`FUN_02318bbc` class → `info[0x10B]` rule:** `u = (class − 7) & 0xFF`; if `u < 2` (class 7/8) → `0x10B = 1`; else if class ∈ {9, 10, 0xD} → `0x10B = 2`; otherwise `0x10B` is left at 0. Only the five relocating moves vanish; all in-place chargers (1, 2–6, 0xB, 0xC) do not.
 
 The full move-list-to-value mapping is also stored in tables:
 - `TWO_TURN_MOVES_AND_STATUSES` at `0x02352AAC` — `{move_id, charge_class}` pairs used by `IsChargingTwoTurnMove`
@@ -253,7 +262,10 @@ for (iVar6 = 0; iVar6 < 0x3f; iVar6++) {
 - How entity pools are organized for different entity types
 - `func_0x01ffb658` (AI move decision, ITCM `0x01FFB658`): inferred to auto-dispatch held move when `info[0xD2] != 0 && != 1`, but undecompilable without loading ITCM region into Ghidra. Verification requires either runtime debugger inspection (DeSmuME / No$GBA) or proper ITCM memory block setup.
 - Player-side turn-2 auto-dispatch: must exist in the player input path (the leader doesn't go through `RunMonsterAi`). Find via xrefs to `info[0xD2]` reads outside AI code.
-- `FUN_02318d58` (charge state clearer): inverse of `FUN_02318bbc`. Body fully documented — clears `info[0xD2]`, `info[0x154]`, and `info[0x10B]` (skipped for `0xD2 == 1` Bide and `0xD2 == 0xC`), then calls `UpdateStatusIconFlags`. Does **not** call `FUN_022bde50` or iterate any effect-attachment table — implies the Layer 0 charge VFX is one-shot (auto-terminates via tick) and there is no persistent looping aura between turns. Exact call site within the move execution pipeline still not documented.
+- `DoMoveShadowForce` passes `defender` (not `attacker`) as the status recipient to `FUN_02318bbc`, applying the charge to the target. Won't round-trip through `IsChargingTwoTurnMove(attacker,…)`; likely buggy/vestigial or a mislabel. Confirm in-game.
+- `entity[0x1C]`: the second offset subtracted alongside `info[0x188]` in the `FUN_02303f18` draw-Y calc. General bob/elevation? Not traced.
+
+> Resolved: airborne hiding is the `info[0x188]` render-Y ramp (`FUN_023046e8`) + viewport cull; `FUN_02318d58` is fully documented and is called from the `DoMove*` release branch. See `Systems/move_effect_pipeline.md` → "Two-Turn Vanish & Elevation Mechanism".
 - Airborne sprite hiding mechanism for `info[0x10B] == 1` (Fly, Bounce, Sky Drop). The renderer only gates on value 2; value 1 sprites still draw. Candidate mechanisms: `entity->elevation` Z-offset, `pixel_pos.y` shift, `entity->is_visible`, `monster->uturn_hide_monster_flag`, or `info[0x165]`. Investigate the Fly/Bounce `DoMove` handlers in the dispatch jumptable at `0x0232f8b8`.
 
 ## Functions Used
@@ -264,5 +276,17 @@ for (iVar6 = 0; iVar6 < 0x3f; iVar6++) {
 | `EntityIsValidMoveEffects` | - | Checks if entity is valid monster for move effects |
 | `SpawnItemEntity` | - | Creates item entity in pool |
 | `SpawnMonster` | `0x022fd084` | Creates monster entity |
+| `InitMonster` | - | Inits monster struct; zeroes `0x10B`/`0x188` among others |
+| `FUN_022e0434` | `0x022e0434` | Floor reset (heal team, revive downed, clear Wonder Tiles); hard-zeroes `0x188` |
 | `UpdateEntityPixelPos` | - | Updates pixel position from tile position |
 | `SetEntityPixelPosXY` | - | Sets pixel position directly |
+| `FUN_02318bbc` | `0x02318bbc` | Universal two-turn charge setter (`0xD2`/`0x154`/`0x10B`/`0xD3`/`0xD4`/`0xAC`) |
+| `FUN_02318d58` | `0x02318d58` | Charge clearer (`0xD2`/`0x154`/`0x10B`; preserves Bide 1 / Bide-like 0xC; leaves `0x188`) |
+| `FUN_02318ad4` | `0x02318ad4` | Airborne rise-wait; blocks the turn until `info[0x188] ≥ 0xC800` |
+| `FUN_022e41b0` | `0x022e41b0` | Plays the fly-up SFX if airborne (no state writes) |
+| `FUN_023046e8` | `0x023046e8` | Per-frame `info[0x188]` elevation lerp (rise/fall) |
+| `FUN_02303f18` | `0x02303f18` | Per-entity render tick; draw-Y uses `0x188`, sprite gated on `0x10B != 2` |
+| `FUN_02303e5c` | `0x02303e5c` | Shadow renderer; no-ops when `display_shadow == 0` |
+| `TwoTurnMoveForcedMiss` | - | Hit gate: reads `0x10B` (+`0xD2` for submerged) with per-move exceptions |
+| `IsChargingTwoTurnMove` | - | Reads `info[0xD2]`, matches against the move's class in the two-turn table |
+| `DoMoveFly` / `DoMoveDig` / `DoMoveDive` / `DoMoveShadowForce` | - | Charge-or-release handlers (classes 7 / 0xA / 9 / 0xD) |
