@@ -7,6 +7,7 @@
 - When the dominant weather changes, `TryActivateWeather` calls one master apply function (`FUN_02334e70`) that performs all visual/audio work
 - A weather produces up to four outputs: a per-weather effect.bin animation, an ambient sound, an animated colormap (palette) tint, and — for Fog/Sandstorm only — a scrolling 3D WTE texture
 - Effect animations and sounds are driven by per-weather lookup tables; the colormap is a 256-entry RGBA table per weather; the 3D textures live in dungeon.bin
+- A separate per-tileset path (`FUN_023389c4`, called from `RunDungeon`) drives an ambient mist/steam 3D overlay keyed by tileset rather than weather — see "Tileset 3D Effects" below
 - This document is considered complete: the full picture (which weathers use which outputs, and the exact asset IDs) has been recovered
 
 ## Memory Locations
@@ -37,6 +38,8 @@ These tables are **not named in pmdsky-debug**; addresses are the dereferenced p
 | Weather effect (floor-entry / boss) | `DAT_022e60e0` | `0x0235124C` | `s32[8]`, index `× 4` (`-1` = none) | `FUN_022e5fe8` |
 | 3D weather config | `DAT_02338ab4` | `0x02353730` | stride 8 per weather; first byte = render mode | `FUN_02338a4c` |
 | Per-weather colormap (target) | via `GetWeatherColorTable` | `*(*DAT_022de634 + 0x48)` | `rgba[256]` per weather, stride `0x400` | `FUN_02334e70` |
+| Tileset 3D mode | `DAT_02338a3c` | `TILESET_PROPERTIES` field, stride `0xC` | byte per tileset → render mode | `FUN_023389c4` |
+| Scroll-step (per mode) | `DAT_02338d54` | — | stride 8: `+0` X step, `+4` Y step | `FUN_02338d34` |
 
 ## Weather State
 
@@ -173,6 +176,7 @@ Only Cloudy and Fog have an ambient sound here — precisely the two weathers wi
 - Live working buffer: `dungeon + 0x1E0`, 256 RGBA (R/G/B at `+0/+1/+2` of each 4-byte entry)
 - Transition is animated: per frame, each channel steps `±10` toward the target, snapping when within 10; runs up to 64 frames, breaking early when converged
 - Flushed each frame via `FUN_022de608`; `DUNGEON_COLORMAP_PTR` is the render-side handle
+- **On disk:** a SIR0-wrapped **colvec** file in dungeon.bin — N colormaps × `0x400` bytes, each 256 entries of RGBX (4th byte `0xFF`), confirming the 256-color / 1024-byte layout. Scrape via `FileType.DBIN_SIR0_COLVEC` (`ColvecHandler`); `Colvec.apply_colormap(weather_id, palette)` is the exact tint op (`new[i] = colormap[w][old_value*3 + channel]`)
 
 **Evidence:** `FUN_02334e70` colormap loop (R channel shown; G/B identical)
 ```c
@@ -244,6 +248,41 @@ for (iVar5 = 0; iVar5 < 0x14; iVar5++) {                                // 20 mo
 }
 ```
 
+## Tileset 3D Effects (Mist / Steam)
+
+A separate per-floor 3D overlay keyed by **tileset**, not `weather_id`. Reuses the `RenderWeather3D` two-slot system (tileset slot `DAT_02338a40`, weather slot `DAT_02338ab8`). The mist texture (1031) is loaded once per dungeon by `LoadWeather3DFiles` into VRAM `0xB000`; this path only sets its scroll mode and, for one tileset, swaps the texture.
+
+### Activation (`FUN_023389c4`)
+
+Called per-floor from `RunDungeon`, immediately before the weather config call:
+
+```c
+FUN_023389c4((int)*(short *)(dungeon + 0x40d4));   // tileset id
+FUN_02338a4c((uint)*(byte  *)(dungeon + 0xcd38));  // weather_id
+```
+
+**Evidence:** `FUN_023389c4`
+```c
+FUN_02338d34(DAT_02338a40, *(byte *)(DAT_02338a3c + tileset_id * 0xc));  // set tileset slot mode
+if (tileset_id == 0xc3) {                                               // tileset 195 only
+    LoadWteFromFileDirectory(&h, PACK_ARCHIVE_DUNGEON, DAT_02338a48, 0);
+    ProcessWte(h.header, 0xb000, 0x14, 0);                              // swap mist VRAM (0xB000, pal 0x1400)
+}
+```
+
+- **Mode:** a per-tileset byte at stride `0xC` (`DAT_02338a3c` — a `tileset_property` field; `+0x0A weather_effect` or `+0x04 stirring_effect`, **confirm by address** against `TILESET_PROPERTIES` NA `0x22C631C`) becomes the slot's render mode via `FUN_02338d34`. Mode 0 = no tileset effect; nonzero = mist scroll.
+- **Texture swap:** only tileset **0xC3 (195)** re-loads a special WTE (`DAT_02338a48`) over the mist VRAM region — the **1003 poison-mist** override (resolves the 1031-vs-1003 selection SkyTemple flagged as unknown). All other tilesets use the default 1031.
+
+### Slot Mechanics
+
+| Function | Purpose |
+|----------|---------|
+| `FUN_02338d94(slot, idx)` | Init slot: alpha start `0x4000` (+0x244), random scroll phase (`DungeonRandInt(0x400)` at +0x25C/+0x260), `+0x264=4`, `+0x268=1`, build the 3×3 quad grid |
+| `FUN_02338d34(slot, mode)` | Write mode to `+0x240` (the byte `RenderWeather3D` reads) and load scroll-step X/Y from `DAT_02338d54[mode*8]` |
+| `FUN_02338e50(elem, idx)` | Per-quad texture/UV binding (slot → VRAM texture + geometry) — *not yet pulled* |
+
+`RenderWeather3D` reads `+0x240`: `0` = inactive, `3` = linear scroll (fog/sandstorm), `9` = sine-wave drift (phase params from `FUN_02338d94`, masked by `DAT_02338d2c`).
+
 ## Per-Weather Output Summary
 
 | Weather | Colormap | Ambient Sound | Effect Animation | 3D Texture |
@@ -260,17 +299,17 @@ for (iVar5 = 0; iVar5 < 0x14; iVar5++) {                                // 20 mo
 ## Scraper / Client Notes
 
 - **Effect animations:** resolve IDs {331, 239, 16, 440, 20, 223} through the `effect_animation_info` → effect.bin pipeline (see `Data Structures/effect_animation_info.md`). These are the precipitation/sky visuals.
-- **Colormap:** scrape the per-weather 256-RGBA tables (stride `0x400`); apply as a fullscreen palette remap. The `±10`/frame fade is optional polish. SkyTemple's "Color Map" editor edits this data if locating the raw bytes via `*DAT_022de634 + 0x48` proves awkward.
+- **Colormap:** scrape the colvec file via `FileType.DBIN_SIR0_COLVEC` (`ColvecHandler`) — `Colvec.colormaps[weather_id]` is the 256-RGB table; replicate `apply_colormap` (per-color LUT) as a fullscreen palette remap. The `±10`/frame fade is optional polish.
 - **3D textures:** scrape WTE files 1001/1005 from dungeon.bin (texture + palette via the `Wte` handler) and reimplement the tiled scroll. Verify the texture format first via `WteImageType` — if `deserialize` raises, the file uses an alpha-interpolated NDS format (A3I5/A5I3) needing manual decode rather than the paletted path.
 - **Audio:** ambient sound table only for Cloudy/Fog; all other weather audio is the effect animation's own `sfx_id`.
 
 ## Open Questions
 
-- Location of `DAT_02338abc` and the full layout of each 8-byte 3D-config entry. Confirmed: first byte = render mode (3 for Sandstorm/Fog). A secondary int field reads Sunny=1, Hail=2 — meaning unverified, not asset-relevant.
-- Exact ROM file backing the per-weather colormap LUT (loaded via `*DAT_022de634 + 0x48`).
-- Whether `DUNGEON_COLORMAP_PTR` points to the `dungeon + 0x1E0` working buffer or a separate render buffer that `FUN_022de608` flushes to.
-- WTE texture format of 1001/1005/1031 (paletted vs A3I5/A5I3) — gate on `WteImageType` during scraping.
-- Sandstorm uses both effect 239 **and** the 3D texture; assumed layered (effect on the leader + fullscreen scroll), unconfirmed in-game.
+- Which `tileset_property` field `DAT_02338a3c` reads (`+0x04 stirring_effect` vs `+0x0A weather_effect`) — confirm by address against `TILESET_PROPERTIES` NA `0x22C631C`.
+- `DAT_02338d54` per-mode scroll-step values and `FUN_02338e50` quad/UV binding — to be dumped when implementing the 3D scroll in the client.
+- WTE texture format of 1001/1005/1031/1003 (paletted vs A3I5/A5I3) — checked at scrape time via `WteImageType`.
+- Whether `DUNGEON_COLORMAP_PTR` points to the `dungeon + 0x1E0` working buffer or a separate render buffer flushed by `FUN_022de608` (cosmetic, internal).
+- Sandstorm uses both effect 239 **and** the 3D texture; assumed layered, unconfirmed in-game.
 
 ## Functions Used
 
@@ -294,6 +333,11 @@ for (iVar5 = 0; iVar5 < 0x14; iVar5++) {                                // 20 mo
 | `IsCurrentFixedRoomBossFight` | — | Selects the entry/boss effect-ID table |
 | `LogMessageByIdWithPopupCheckUser` | — | Weather message popup (id `0xA45 + weather_id`) |
 | `LoadWteFromFileDirectory` / `ProcessWte` | — | WTE load + texture/palette VRAM upload |
+| `RunDungeon` | overlay 29 | Calls `LoadWeather3DFiles` (once) and `FUN_023389c4`/`FUN_02338a4c` (per floor) |
+| `FUN_023389c4` | `0x023389C4` | Tileset 3D activation: set mist slot mode; swap to 1003 for tileset 195 |
+| `FUN_02338d94` | `0x02338D94` | Init a 3D render slot (alpha, scroll phase, 3×3 grid) |
+| `FUN_02338d34` | `0x02338D34` | Set slot render mode + load per-mode scroll steps |
+| `FUN_02338e50` | `0x02338E50` | Per-quad texture/UV binding (not yet pulled) |
 
 ## Cross-References
 
