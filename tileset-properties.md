@@ -61,7 +61,7 @@ struct tileset_property {
     uint8_t  secret_power_effect; // 0x05: Effect of the move Secret Power
     uint16_t camouflage_type;     // 0x06: PokeType for the move Camouflage
     uint16_t nature_power_move;   // 0x08: Which move Nature Power becomes
-    uint8_t  weather_effect;      // 0x0A: Ambient weather
+    uint8_t  weather_effect;      // 0x0A: 3D mist drift mode (0=none, 1-6=direction)
     bool     is_water_tileset;    // 0x0B: Affects shadows, Dive, Drought Orb
 };
 ```
@@ -131,12 +131,19 @@ properties = HardcodedDungeons.get_tileset_properties(ov10, config)
 | 13    | Seed Bomb   |
 | 14    | Mud Bomb    |
 
-**Weather Effect** (`weather_effect`) — Ambient weather displayed in the dungeon.
+**Weather Effect** (`weather_effect`) — Selects the tileset's ambient **3D mist/steam overlay** and its scroll direction. Despite the name, this is not part of the `weather_id` weather system. The confirmed consumer is `FUN_023389c4`, which passes the value straight through as the render mode of the tileset mist slot in `RenderWeather3D` (the mist texture is `dungeon.bin[1031]`, or 1003 for tileset 195). Previously documented as "fog levels 1–6"; RE shows the value is the drift direction:
 
-| Value | Effect  |
-|-------|---------|
-| 0     | Clear   |
-| 1–6   | Foggy (levels 1–6) |
+| Value | Mist drift |
+|-------|------------|
+| 0     | None (no mist overlay) |
+| 1     | South      |
+| 2     | South-East |
+| 3     | East       |
+| 4     | North-East |
+| 5     | North      |
+| 6     | North-West |
+
+The renderer also defines modes 7 (West), 8 (South-West) and 9 (sine drift), but these aren't reached through `weather_effect`. See `weather_3d_rendering.md` for the scroll mechanics and full mode table.
 
 **Is Water Tileset** (`is_water_tileset`) — Boolean flag. When true:
 
