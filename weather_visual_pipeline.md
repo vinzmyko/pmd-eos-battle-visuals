@@ -169,14 +169,30 @@ Only Cloudy and Fog have an ambient sound here — precisely the two weathers wi
 
 ## Stage 2: Colormap Tint (all weathers)
 
-`FUN_02334e70` animates the live floor colormap toward the new weather's target table. This is what tints the entire dungeon (e.g. darker/bluer in rain). It applies to **every** weather, including those with no effect animation.
+`FUN_02334e70` animates the live floor colormap toward the new weather's target table. This tints the entire dungeon (e.g. darker/bluer in rain) and applies to **every** weather, including those with no effect animation.
 
-- Target: `GetWeatherColorTable(weather)` → `*(*DAT_022de634 + 0x48) + weather_id * 0x400`
-- Each weather target is **256 RGBA entries** (4 bytes each = `0x400` bytes). (Resolves the conflicting "1024 entries" symbol note — it is 1024 *bytes* / 256 colors.)
-- Live working buffer: `dungeon + 0x1E0`, 256 RGBA (R/G/B at `+0/+1/+2` of each 4-byte entry)
-- Transition is animated: per frame, each channel steps `±10` toward the target, snapping when within 10; runs up to 64 frames, breaking early when converged
-- Flushed each frame via `FUN_022de608`; `DUNGEON_COLORMAP_PTR` is the render-side handle
-- **On disk:** a SIR0-wrapped **colvec** file in dungeon.bin — N colormaps × `0x400` bytes, each 256 entries of RGBX (4th byte `0xFF`), confirming the 256-color / 1024-byte layout. Scrape via `FileType.DBIN_SIR0_COLVEC` (`ColvecHandler`); `Colvec.apply_colormap(weather_id, palette)` is the exact tint op (`new[i] = colormap[w][old_value*3 + channel]`)
+**Asset — dungeon.bin file 1034.** The weather colvec is `dungeon.bin[1034]`: a SIR0-wrapped file, **8 colormaps × `0x400` bytes** = 256 RGBX entries each (4th byte `0xFF`), one map per `weather_id` (0–7). Confirmed by scan (the only SIR0 file that is 8×`0x400` with a constant X byte) and by content (map 0 is a near-identity ramp). `dungeon.bin[1023]` is a sibling colvec of identical format used for **fade-to-black** (all 8 maps send every value to 0) — not weather. Scrape via `FileType.DBIN_SIR0_COLVEC` (`ColvecHandler`), which returns 256 RGB per map (X stripped).
+
+**Apply — three per-channel transfer curves.** Each colormap is three independent intensity curves, not a palette swap. For a palette colour whose channel `c` holds value `v`, the output is `colormap[w][v*3 + c]`. For clear/sunny/fog the three curves are identical (pure luminance remap, no hue shift); for sandstorm/cloudy/rain/hail/snow they diverge, producing the colour cast:
+
+| weather_id | weather | tint |
+|---|---|---|
+| 0 | clear | identity — no tint |
+| 1 | sunny | bright neutral, lifted blacks |
+| 2 | sandstorm | warm tan (R≈G > B) |
+| 3 | cloudy | cool blue-gray (B > R=G) |
+| 4 | rain | dark blue, crushed shadows |
+| 5 | hail | cold cyan |
+| 6 | fog | flat low-contrast gray, heavily lifted blacks |
+| 7 | snow | cold cyan-blue |
+
+**Runtime path:**
+
+- Target table: `GetWeatherColorTable(weather)` → `*(*DAT_022de634 + 0x48) + weather_id * 0x400`. `DAT_022de634` (`0x02353530`) is the dungeon-struct pointer, so the loaded colvec sits at `dungeon + 0x48`; the `* 0x400` stride matches the 8×`0x400` file layout.
+- Live working buffer: `dungeon + 0x1E0`, 256 RGBA (R/G/B at `+0/+1/+2` of each 4-byte entry).
+- Transition is animated: per frame each channel steps `±10` toward the target, snapping when within 10; up to 64 frames, breaking early on convergence.
+- Flushed each frame via `FUN_022de608`; `DUNGEON_COLORMAP_PTR` is the render-side handle.
+- **Loader note:** the file index 1034 is established from content + the `0x400` apply stride; an immediate-search for `0x40A` in code came up empty (likely a literal-pool constant), so the exact load call is not yet pinned. Minor open item.
 
 **Evidence:** `FUN_02334e70` colormap loop (R channel shown; G/B identical)
 ```c
