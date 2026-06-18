@@ -288,17 +288,15 @@ See **`weather_3d_rendering.md`** for the slot mechanics and **`tileset-properti
 ## Scraper / Client Notes
 
 - **Effect animations:** resolve IDs {331, 239, 16, 440, 20, 223} through the `effect_animation_info` → effect.bin pipeline (see `Data Structures/effect_animation_info.md`). These are the precipitation/sky visuals.
-- **Colormap:** scrape the colvec file via `FileType.DBIN_SIR0_COLVEC` (`ColvecHandler`) — `Colvec.colormaps[weather_id]` is the 256-RGB table; replicate `apply_colormap` (per-color LUT) as a fullscreen palette remap. The `±10`/frame fade is optional polish.
+- **Colormap:** scrape `dungeon.bin[1034]` via `FileType.DBIN_SIR0_COLVEC` (`ColvecHandler`) — `Colvec.colormaps[weather_id]` is a 256-entry table of three per-channel transfer curves; replicate `apply_colormap` (`out_c = colormap[w][in_c*3 + c]`) as a fullscreen palette remap. The `±10`/frame fade is optional polish.
 - **3D textures:** WTE files 1001 (fog) / 1005 (sandstorm) — plus 1031/1003 for tileset mist — are 4bpp paletted 128×128 and decode directly via the `Wte` handler (`to_pil`), so no manual A3I5/A5I3 decoder is needed. Reimplement the tiled scroll in the client; see `weather_3d_rendering.md` for the exact math.
 - **Audio:** ambient sound table only for Cloudy/Fog; all other weather audio is the effect animation's own `sfx_id`.
 
 ## Open Questions
 
-- Which `tileset_property` field `DAT_02338a3c` reads (`+0x04 stirring_effect` vs `+0x0A weather_effect`) — confirm by address against `TILESET_PROPERTIES` NA `0x22C631C`.
-- `DAT_02338d54` per-mode scroll-step values and `FUN_02338e50` quad/UV binding — to be dumped when implementing the 3D scroll in the client.
-- WTE texture format of 1001/1005/1031/1003 (paletted vs A3I5/A5I3) — checked at scrape time via `WteImageType`.
+- Exact load call for the weather colvec (`dungeon.bin[1034]`): the index is established from content + the `0x400` apply stride, but an immediate-search for `0x40A` in code was empty (likely a literal-pool constant), so the loader/init that stores it at `dungeon + 0x48` is not yet identified.
 - Whether `DUNGEON_COLORMAP_PTR` points to the `dungeon + 0x1E0` working buffer or a separate render buffer flushed by `FUN_022de608` (cosmetic, internal).
-- Sandstorm uses both effect 239 **and** the 3D texture; assumed layered, unconfirmed in-game.
+- Sandstorm uses both effect 239 **and** the 3D texture (both confirmed configured); the in-game layering order (sprite over haze) is assumed, not visually verified.
 
 ## Functions Used
 
@@ -334,4 +332,6 @@ See **`weather_3d_rendering.md`** for the slot mechanics and **`tileset-properti
 
 > See `screen_effect_system.md` for the unrelated type-5/6 move screen effects (distinct from the weather 3D system).
 
-> See `tileset-properties.md` for per-tileset ambient particles (`stirring_effect`) and fog levels (`weather_effect`), which are separate from the `weather_id` system documented here.
+> See `weather_3d_rendering.md` for the full `RenderWeather3D` system (two-slot model, scroll modes/directions, alpha/fade, WTE textures) shared by fog/sandstorm and the tileset mist.
+
+> See `tileset-properties.md` for the per-tileset `weather_effect` field, which selects the 3D mist drift mode/direction (separate from the `weather_id` system here), and `stirring_effect` for ambient 2D particles.
