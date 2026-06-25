@@ -57,7 +57,7 @@ bool FloorSecondaryTerrainIsChasm(int16_t tileset_id) {
 ```c
 struct tileset_property {
     int32_t  map_color;           // 0x00: Minimap colour (see TilesetMapColor)
-    uint8_t  stirring_effect;     // 0x04: Ambient particle effect
+    uint8_t  stirring_effect;     // 0x04: Tileset visual for the turn-limit wind warning (see below)
     uint8_t  secret_power_effect; // 0x05: Effect of the move Secret Power
     uint16_t camouflage_type;     // 0x06: PokeType for the move Camouflage
     uint16_t nature_power_move;   // 0x08: Which move Nature Power becomes
@@ -93,16 +93,40 @@ properties = HardcodedDungeons.get_tileset_properties(ov10, config)
 | 7     | Purple |
 | 8     | Pink   |
 
-**Stirring Effect** (`stirring_effect`) — Ambient particle system displayed in the dungeon.
+**Stirring Effect** (`stirring_effect`) — The tileset-themed visual played by the **turn-limit "wind" warning**, *not* a continuous ambient particle layer. As `dungeon::wind_turns` (`dungeon + 0x784`) runs down, `DecrementWindCounter` escalates a warning stage (`dungeon + 0x79a`, 0→4) and at each stage plays this effect keyed to the current tileset, before the leader is finally blown off the floor on the last stage. It is a blocking, one-shot animation gated on the turn counter — it does not run while the player is free to act.
 
-| Value | Effect      |
-|-------|-------------|
-| 0     | Leaves      |
-| 1     | Snowflakes  |
-| 2     | Flames      |
-| 3     | Sand        |
-| 4     | Bubbles     |
-| 5     | Earthquake  |
+| Value | Effect     | Mechanism |
+|-------|------------|-----------|
+| 0     | Leaves     | particle burst |
+| 1     | Snowflakes | particle burst |
+| 2     | Flames     | particle burst |
+| 3     | Sand       | particle burst |
+| 4     | Bubbles    | particle burst (water SFX override) |
+| 5     | Earthquake | screen shake (writes `screen_shake_offset`) |
+
+**Values 0–4** spawn a short discrete particle burst: own allocation, four sprites (the phase arg is 0 on the wind path) seeded at the leader's pixel position, drifting vertically and recycling until the stage timer drains. The per-value sprite comes from a table indexed by `value * 0x18` (≤3 variants × 8 bytes; short `+0x00` = effect-sprite id, int `+0x04` = animation-frame base). The gust SFX is keyed by warning stage and shared across tilesets, except value 4, which overrides to a water/bubble SFX at the terminal stage.
+
+**Value 5** does **not** spawn particles: it drives `screen_shake_offset` (`dungeon + 0x1A230`) directly from its own curve table, bracketed by a music swap. Same render field as the Earthquake/Magnitude moves, separate self-contained player — see `screen_shake.md`.
+
+> ⚠️ Earlier notes called this an "ambient particle system." That was wrong on two counts: it is the turn-limit wind warning (not always-on), and value 5 is a screen shake (not a particle). Both corrections come from tracing the sole reader `FUN_022ec9a4`.
+
+**Consumer chain (NA):**
+
+| Function | Address | Role |
+|----------|---------|------|
+| `FUN_022ec9a4` | `0x022EC9A4` | Sole reader of `stirring_effect`; branches value 5 vs 0–4 |
+| `DecrementWindCounter` | — | Only caller; turn-limit warning ladder (runs in `RunFractionalTurn`) |
+| `FUN_022e5dbc` | `0x022E5DBC` | Effect dispatcher for values 0–4 (stage SFX + particle spawn) |
+| `FUN_022e6a00` | `0x022E6A00` | Spawns the particle burst |
+| `FUN_022e6c08` | `0x022E6C08` | Per-frame particle motion / recycle (looped while playing) |
+| `FUN_022e6ce0` | `0x022E6CE0` | Particle teardown |
+| `FUN_022ec8a8` | `0x022EC8A8` | Value-5 screen-shake player |
+
+Field pointer: `DAT_022ecad8 = 0x022C6320` (`TILESET_PROPERTIES + 0x04`). Sprite-id table: `DAT_022e6c00` (stride `0x18`). Stage SFX table: `DAT_022e5e7c`; value-4 override: `DAT_022e5e80`. Value-5 shake curve: `DAT_022ec998` (stride `0xc0` per stage).
+
+**Open questions:**
+- Only overlays 10/29 were searched for readers; overlay 31 not yet checked for a second consumer.
+- `FUN_022e5dbc`'s phase arg is always 0 on the wind path, so its `phase == 3` branches (music stop + terminal SFX) are reached only by some other, unconfirmed caller.
 
 **Secret Power Effect** (`secret_power_effect`) — Secondary effect when the move Secret Power is used.
 
