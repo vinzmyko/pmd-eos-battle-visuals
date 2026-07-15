@@ -331,7 +331,7 @@ decrement burn_damage_countdown
 | Burn | 0xBF = 1 | 0xC1 | `DAT_02310aac` | `DAT_02310ab0` (fixed) | `DAMAGE_MESSAGE_BURN` (1) | `0x247` | Two-counter system (see below) |
 | Poison | 0xBF = 2 | 0xC1 | `DAT_02310ac0` | `DAT_02310ac4` (fixed) | `DAMAGE_MESSAGE_POISON` (3) | `0x249` | Poison Heal ability reverses to HP recovery |
 | Badly Poisoned | 0xBF = 3 | 0xC1 | `DAT_02310ac8` | table at `DAT_02310acc` | `DAMAGE_MESSAGE_POISON` (3) | `0x249` | Escalating damage indexed by tick count (0xC2, caps at 29). Poison Heal reverses |
-| Constriction | 0xC4 = 7 | 0xCD | `DAT_02310ad0` | `DAT_02310ad4` (fixed) | `DAMAGE_MESSAGE_CONSTRICTION` (2) | `0x248` | **EXCEPTION:** plays `PlayEffectAnimationEntityStandard` with anim from offset 0xC8 BEFORE damage |
+| Constriction | 0xC4 = 7 | 0xCD | `DAT_02310ad0` | `DAT_02310ad4` (fixed) | `DAMAGE_MESSAGE_CONSTRICTION` (2) | `0x248` | **EXCEPTION:** plays `PlayEffectAnimationEntityStandard` with anim from offset 0xC8 BEFORE damage. The `0xC8` value is written at infliction by `DoMoveDamageConstrict10` (per move ID) or `DoMoveWhirlpool` (`0x3b`) — see `Moves/binding_moves.md` |
 | Wrap | 0xC4 = 4 | 0xCD | `DAT_02310ad8` | `DAT_02310adc` (fixed) | `DAMAGE_MESSAGE_WRAP` (5) | `DAT_02310ae0` | — |
 | Wrapped/Ingrain | 0xC4 = 5 | 0xCD | `DAT_02310ae4` | `DAT_02310ae8` | — | — | **Heals HP** instead of dealing damage |
 | Curse | 0xD8 = 1 | 0xDC | `DAT_02310aec` | max_hp / 4 (min 1) | `DAMAGE_MESSAGE_CURSE` (7) | `0x24b` | Damage calculated as `(max_hp_stat + max_hp_boost) / 4` |
@@ -429,7 +429,7 @@ For a radial / room-range sweep that includes sleeping or petrified targets:
 - Woken targets cannot act until their next turn (sleep is cleared, but turn order is unaffected)
 - For nightmare (`0xBD == 3`), the wake-up still applies the `DAMAGE_MESSAGE_NIGHTMARE` damage even when triggered mid-move-resolution
 
-> See `Systems/move_effect_pipeline.md` → `ExecuteMoveEffect Per-Target Loop Body` for the surrounding control flow.
+> See `Systems/move_dispatch.md` → "ExecuteMoveEffect (Dispatcher)" for the surrounding per-target loop control flow.
 
 ### Animation Freeze Mechanism (CONFIRMED)
 
@@ -506,6 +506,12 @@ When a status expires or is cured, the typical sequence is:
 2. Status field set to 0 (e.g. `*(offset + 0xBF) = 0`)
 3. `UpdateStatusIconFlags(target)` — recalculates icon bitfield, removes the icon
 4. Recovery animation: `FUN_02304a48(target, 8)` — monster animation ID 8 (wake-up/recovery)
+
+For the multi-status cure path (`EndNegativeStatusCondition`, used by Refresh / Heal Bell /
+Aromatherapy and by Shed Skin / Hydration), the cure sparkle `FUN_022e543c` plays once when
+`animation != 0`. This is the only VFX on the cure path — individual `End*ClassStatus`
+functions play nothing, except `EndFrozenClassStatus` case 1 (thaw effect `0x18`).
+See `Moves/status_cure_moves.md`.
 
 The `End*ClassStatus` functions (e.g. `EndBurnClassStatus`, `EndSleepClassStatus`,
 `EndFrozenStatus`, `EndLeechSeedClassStatus`) all follow this pattern.
@@ -703,3 +709,6 @@ These correspond to `enum damage_source_non_move` values in pmdsky-debug headers
 | `FUN_022e3e74` | `0x022e3e74` | Sleep application VFX (effect 0x25 + sound) |
 | `InflictSleepStatusSingle` | — | Inner sleep setter (writes 0xBD, 0xBE) |
 | `FreeOtherWrappedMonsters` | — | Releases wrapped monsters when wrapper's freeze class changes |
+| `FUN_022e543c` | `0x022e543c` | Universal status-cure sparkle (gated on animation flag) |
+| `EndNegativeStatusCondition` | — | Multi-status cure-all (Refresh / Heal Bell / Aromatherapy) |
+| `DoMoveDamageConstrict10` | `0x0232b5e8` | Writes constriction tick animation ID to info `0xC8` |
