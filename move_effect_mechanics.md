@@ -44,6 +44,28 @@ then a `bl` to the shared mechanic function. Match the branch target to a known 
 
 ---
 
+## Move Effect Dispatch
+
+`ExecuteMoveEffect` selects each move's `DoMoveX` via a jump table indexed by move ID.
+The table is an array of ARM `b` instructions (NOT function pointers), each branching to a
+short trampoline that `bl`s the real handler.
+
+| Property | Value |
+|----------|-------|
+| Table Base (NA) | `0x0232f8b8` |
+| Index | `move_id` (0 to `0x21E`) |
+| Entry Size | 4 bytes (ARM `b`, opcode `0xEA`) |
+
+**Decode:** `branch_target = entry_addr + 8 + (sign_extend(offset_24) << 2)`
+
+Multiple move IDs can share one handler (e.g. `DoMoveDamageConstrict10` for five binding
+moves, `DoMoveHealStatus` for Refresh/Heal Bell/Aromatherapy).
+
+> See `Systems/move_dispatch.md` for the full dispatch mechanism, `FUN_02322374`, and the
+> decode script.
+
+---
+
 ## Stat Boost/Drop System
 
 ### Stat Stages (BoostOffensiveStat / BoostDefensiveStat)
@@ -353,14 +375,32 @@ call at `022f4e84` indicate unanalyzed code. Re-disassembly starting at `022f4e9
 | `FUN_022f4dac` | `0x022f4dac` | Item use handler (action 0x0A), NOT move execution |
 | `ExecuteMonsterAction` | — | Top-level action dispatcher |
 | `UpdateStatusIconFlags` | `0x022e3a58` | Recalculates status icon bitfield |
+| `FUN_02322374` | `0x02322374` | Move-use executor (multi-strike, Metronome, Nature Power) |
+| `ExecuteMoveEffect` | — | Per-target loop + jump-table dispatcher to `DoMoveX` |
 
 ---
 
-## Breadcrumbs
+## Cross-References
 
-- **Move execution handler** — likely `FUN_022f59c4` (action 0x13), `FUN_022f5f18` (0x14),
-  or `FUN_0231a8a0` (0x15). These are the unidentified action handlers that are candidates
-  for the actual "use a move" dispatch.
+> See `Systems/move_dispatch.md` for the move-use execution path and jump-table dispatch
+
+> See `Moves/binding_moves.md` for the Shadow Hold / Wrap / Constriction handlers
+
+> See `Moves/status_cure_moves.md` for `DoMoveHealStatus` and the cure infrastructure
+
+> See `Moves/reflect_moves.md` for Counter / Magic Coat and the bounce enforcement
+
+> See `Moves/baton_pass.md` for `DoMoveSwitchPositions`
+
+---
+
+## Notes
+
+- **Move execution handler** — RESOLVED. Move-use flows through `FUN_02322374` (the
+  multi-strike executor: handles Metronome, Nature Power, strike count, target list) →
+  `ExecuteMoveEffect` (per-target loop + the giant move-ID jump table that dispatches to
+  each `DoMoveX`). See `Systems/move_dispatch.md`. The action-ID handlers `FUN_022f59c4` /
+  `FUN_022f5f18` / `FUN_0231a8a0` sit above this on the `ExecuteMonsterAction` path.
 - **waza_p.bin move data** — each entry is `0x1A` bytes. Offset `0x14` is the taunt flag
   (true = can be used while taunted). Other offsets contain move category, type, power, etc.
 - **`FUN_022f4dac` incomplete decompilation** — Ghidra fails to decompile past `022f4e84`.
