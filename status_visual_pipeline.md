@@ -450,6 +450,8 @@ The sprite literally freezes on whatever frame it was displaying at the moment t
 **`TryInflictFrozenStatus` confirmed:** No `ChangeMonsterAnimation` call exists anywhere in the infliction chain. The status field is set, the one-shot VFX plays, and the frame-halt in `FUN_02303f18` handles the rest.
 
 **Sprite tremble effect:** `FUN_02303f18` applies a positional shake offset for petrified (freeze==6), paralysis (burn==4), and shadow hold (freeze==2), but NOT for regular frozen (freeze==1). The frozen sprite is completely still.
+
+The offset is `counter & 2` where `counter` (`DAT_023046d8`) is a free-running global counter also read elsewhere in this function (e.g. `& 1` in the `FUN_022ecb38` branch), not a per-status toggle. `& 2` on an incrementing counter produces a period-4 square wave (low 2 frames, high 2 frames), not an every-frame flip. Implementers reproducing this client-side should replicate the waveform, not a simple per-frame bool toggle.
 ```c
 // ~0x023043xx region of FUN_02303f18
 if ((uVar11 == 6 || sVar4 == (status_burn_id_8)0x4) || uVar11 == 2) {
