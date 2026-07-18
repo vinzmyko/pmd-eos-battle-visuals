@@ -44,13 +44,14 @@ address range `022e4068`–`022e53f0`.
 | Petrified | `FUN_022e41f0` | `0x1A7` | 423 | `DAT_022e423c` |
 | Poisoned | `FUN_022e4388` | `0x13A` | 314 | `DAT_022e43d4` |
 | Badly Poisoned | `FUN_022e43d8` | `0x13A` | 314 | `DAT_022e4424` |
-| Frozen | `FUN_022e4c4c` | `0x15` | 21 | `022e4c4c` (hardcoded, palette 3) |
+| Frozen | `FUN_022e4c4c` | `0x15` | 21 | `022e4c4c` (hardcoded, attachment 3 = Centre) |
 | Flash Fire | `FUN_022e4338` | `0x1A9` | 425 | `DAT_022e4384` |
 | Blinker | `FUN_022e486c` | `0x41` | 65 | `022e486c` (hardcoded) |
 | Sure Shot | `FUN_022e456c` | `0x05` | 5 | `022e4578` (hardcoded) |
 | Cringe/Flinch | `PlayExclamationPointEffect` | `0x143` | 323 | `DAT_022e3e70` / `DAT_022e3f1c` / `DAT_022e53e8` (3 identical copies) |
 | HP Recovery | `FUN_022e4430` | `0x171` | 369 | `DAT_022e447c` |
 | HP Restore | `FUN_022e4480` | `0x07` | 7 | `022e448c` (hardcoded) |
+| Status Cure (sparkle) | `FUN_022e543c` | `0x15` | 21 | `022e5458` (hardcoded; shares effect.bin 21 with Frozen application) |
 | Speed Up | `PlaySpeedUpEffect` | `0x18B` | 395 | `DAT_022e4518` |
 | Speed Down | `PlaySpeedDownEffect` | `0x18A` | 394 | `DAT_022e4568` |
 | Yawning tick → Sleep | `FUN_022e53f0` | `0x19` | 25 | `022e53f0` (hardcoded) |
@@ -147,6 +148,7 @@ Several statuses share the same effect.bin animation:
 | `0x13A` (314) | Poisoned, Badly Poisoned |
 | `0x143` (323) | Cringe/Flinch (3 identical function copies at different addresses) |
 | `0x1A9` (425) | Flash Fire, Offensive Stat Up (physical) |
+| `0x15` (21) | Frozen application (`FUN_022e4c4c`), Status cure sparkle (`FUN_022e543c`) |
 
 ---
 
@@ -345,7 +347,11 @@ decrement burn_damage_countdown
 **Infliction (`TryInflictFrozenStatus`):**
 1. Immunity checks: Safeguard, `IsProtectedFromNegativeStatus`, exclusive item `EXCLUSIVE_EFF_NO_FREEZE`, Magma Armor ability, Ice type, lava terrain
 2. If target was wrapping (0xC4 = 3 or 4), `FreeOtherWrappedMonsters` releases wrapped monsters
-3. `FUN_022e4c4c` → `PlayEffectAnimationEntity(target, 0x15, palette=3)` — one-shot ice flash
+3. `FUN_022e4c4c` → `PlayEffectAnimationEntity(target, 0x15, ...)` — one-shot ice flash. The
+   `3` argument is the **attachment-point index (Centre)**, NOT a palette — confirmed by
+   `FUN_022e543c` (cure sparkle) passing the same effect 0x15 + arg 3 and rendering at Centre.
+   `PlayEffectAnimationEntity` takes no palette argument; its arg after attachment (`2` here) is
+   the delay flag fed to `AnimationDelayOrSomething`.
 4. `info + 0xC4 = 1`, `info + 0xCC = CalcStatusDuration() + 1`, `info + 0xCD = 0`
 5. Log message, `UpdateStatusIconFlags` → SMA ice overlay (anim 4) starts rendering persistently
 6. `TryActivateQuickFeet`, `ChangeShayminForme` (Shaymin reverts to Land forme)
@@ -511,7 +517,9 @@ When a status expires or is cured, the typical sequence is:
 
 For the multi-status cure path (`EndNegativeStatusCondition`, used by Refresh / Heal Bell /
 Aromatherapy and by Shed Skin / Hydration), the cure sparkle `FUN_022e543c` plays once when
-`animation != 0`. This is the only VFX on the cure path — individual `End*ClassStatus`
+`animation != 0`. It calls `PlayEffectAnimationEntity(target, 0x15, ...)` — **effect.bin 21**,
+at the Centre attachment point (the same effect.bin animation the Frozen application uses).
+Fired once per cured entity, NOT once per status class. This is the only VFX on the cure path — individual `End*ClassStatus`
 functions play nothing, except `EndFrozenClassStatus` case 1 (thaw effect `0x18`).
 See `Moves/status_cure_moves.md`.
 
