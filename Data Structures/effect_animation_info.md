@@ -153,7 +153,12 @@ iVar3 = LoadWanTableEntryFromPack(wan_table, PACK_ARCHIVE_EFFECT, 0, 0, '\0');  
 
 **Key implication:** The `animation_index` field for type 1/2 effects indexes directly into the unified file 0 or file 1's animation sequence table. The `file_index` field is **ignored** for types 1/2 — no per-effect file loading occurs.
 
-**Called from:** `RunDungeon` → `FUN_022de904` → `FUN_022bd82c`
+**Called from:** `RunDungeon` → `FUN_022bdab0()` → `FUN_022bd82c(0)`
+
+`FUN_022bdab0` and `FUN_022bda84` are thin wrappers passing 0 and 1 respectively.
+`RunDungeon` calls only `FUN_022bdab0`, so **dungeons always run in state 0** and
+`anim_type` 1 effects always resolve while `anim_type` 2 effects never do. `FUN_022bda84`
+is reached from elsewhere (non-dungeon context, unidentified).
 
 | Function | Address (NA) | Purpose |
 |----------|--------------|---------|
@@ -333,6 +338,25 @@ This tests for 32-bit overflow when multiplying by 0x20000000:
 - Sequences 8-15 are 8 pre-rotated variants
 - Used for effects that must visually rotate
 
+#### Matchup Hit Reactions (Effects 8–11)
+
+The canonical `anim_type` 1 case. All four are shared-WAN, so `file_index` is ignored and
+`animation_index` is a flat sequence index into the pre-loaded **effect pack file 0**.
+
+| Effect | Addr | anim_type | file_index | palette | animation_index | sfx_id | attachment | non_blocking | loop |
+|---|---|---|---|---|---|---|---|---|---|
+| 8 | `0x022CC60C` | 1 | 0 (ignored) | 14 | 3 | 283 (`0x11B`) | 3 | 0 | 0 |
+| 9 | `0x022CC628` | 1 | 0 (ignored) | 14 | 15 | 281 (`0x119`) | 3 | 0 | 0 |
+| 10 | `0x022CC644` | 1 | 0 (ignored) | 14 | 16 | 280 (`0x118`) | 3 | 0 | 0 |
+| 11 | `0x022CC660` | 1 | 0 (ignored) | 14 | 4 | 276 (`0x114`) | 3 | 0 | 0 |
+
+Note that indices 3 and 4 are adjacent but represent the weakest and strongest reactions —
+sprite adjacency is not a reliable guide to semantics here.
+
+Scrapers that resolve these by following `file_index` will land on file 0 by coincidence,
+but must still treat `animation_index` as a flat sequence index into group 0, not a group
+index.
+
 ### Summary: Directional vs Non-Directional
 
 **Directional Effects** (sequence_count % 8 == 0):
@@ -503,7 +527,7 @@ if (0x1f < (int)uVar7) { ... }
 
 ## Open Questions
 
-- What determines state 0 vs 1 (param_1 to FUN_022bd82c, set by RunDungeon — likely dungeon type)
+- What calls `FUN_022bda84` (state 1) — not reached from `RunDungeon`
 - Purpose of +0x2790 (palette variant, only written in state 1 path)
 - Purpose of +0x279C (read in types 1 and 4, secondary animation parameter)
 - Complete screen effect control structure at context + 0xE8

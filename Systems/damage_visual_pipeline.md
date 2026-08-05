@@ -71,10 +71,10 @@ void FUN_022e5478(int *param_1, int param_2)
     }
 
     switch(iVar1) {
-    case 0: default: iVar1 = 8;  break;  // Neutral
+    case 0: default: iVar1 = 8;  break;  // Immune (0.5x) — heavily resisted
     case 1:          iVar1 = 9;  break;  // Not very effective
-    case 2:          iVar1 = 10; break;  // Super effective
-    case 3:          iVar1 = 11; break;  // Immune
+    case 2:          iVar1 = 10; break;  // Neutral
+    case 3:          iVar1 = 11; break;  // Super effective
     }
 
     PlayEffectAnimationEntity(
@@ -92,16 +92,25 @@ void FUN_022e5478(int *param_1, int param_2)
 
 ### Effect ID Table
 
-| type_matchup | Value | Effect ID | Expected Visual |
-|--------------|-------|-----------|-----------------|
-| MATCHUP_NEUTRAL | 0 | 8 | Neutral hit |
-| MATCHUP_NOT_VERY_EFFECTIVE | 1 | 9 | Resisted hit |
-| MATCHUP_SUPER_EFFECTIVE | 2 | 10 | Super effective hit |
-| MATCHUP_IMMUNE | 3 | 11 | Immune hit |
+| type_matchup | Value | Effect ID | Multiplier | Visual |
+|--------------|-------|-----------|------------|--------|
+| MATCHUP_IMMUNE | 0 | 8 | 0.5× | Heavily resisted |
+| MATCHUP_NOT_VERY_EFFECTIVE | 1 | 9 | ~0.707× | Resisted |
+| MATCHUP_NEUTRAL | 2 | 10 | 1.0× | Neutral |
+| MATCHUP_SUPER_EFFECTIVE | 3 | 11 | ~1.398× | Super effective |
 
-**Note:** Effects 8-11 need visual verification in extracted sprite data (`asset_index.json`).
+The enum is ascending by damage multiplier. `MATCHUP_IMMUNE` is the 0.5× bucket, **not**
+zero damage — see `Systems/type_matchup_pipeline.md`.
 
-**Note:** `FUN_0230d618` overrides the matchup value when dungeon flag `+0x1C5` is set, likely the Type-Bulldozer IQ skill or similar mechanic that hides type effectiveness from the player.
+Effect rows 8–11 are all `anim_type` 1 (shared WAN file 0), `attachment_point` 3 (Centre),
+blocking, non-looping, palette 14. Animation indices are 3, 15, 16, 4 respectively. The
+explicit `3` passed by `FUN_022e5478` **matches** the table's `attachment_point` rather
+than overriding it.
+
+**Note:** `FUN_0230d618` overrides the matchup value when dungeon flag `+0x1C5` is set.
+That flag is not an IQ skill — it is a damage-calc diagnostic byte set by
+`CalcTypeBasedDamageEffects` for **Thick Fat** and **Heatproof**. The table at
+`0x02352894` is `{0, 0, 0, 1}`, a one-step downgrade of the displayed reaction.
 
 ### Playback Behavior
 
@@ -110,6 +119,39 @@ void FUN_022e5478(int *param_1, int param_2)
 Internally, `PlayEffectAnimationEntity` dispatches via `FUN_022bf2b4` → `FUN_022be780(7, ...)` — **dispatch type 7** (generic entity-positioned), not the type 6 used by move primary visuals. This means matchup hit effects don't participate in the move-layer conflict tracking and can layer freely with any move visuals still present in the effect pool.
 
 > See `Data Structures/effect_animation_info.md` → "Effect Dispatch Types" for the full type table.
+
+## Zero-Damage Path Skips the Reaction
+
+When `damage_data->damage == 0`, `ApplyDamage` takes a branch that returns **before**
+`FUN_022e5478` is ever reached. No hit reaction effect plays.
+
+**Evidence:** `ApplyDamage`
+```c
+uVar23 = damage_data->damage;
+if (uVar23 == 0) {
+    bVar8 = ShouldDisplayEntityWrapper(attacker);
+    if ((bVar8 == '\0') || (bVar8 = ShouldDisplayEntityWrapper(defender), bVar8 == '\0')) {
+        if (monster->apply_flash_fire_boost == '\0') {
+            LogMessageByIdWithPopupCheckUserTarget(attacker, defender, DAT_02309fc4);
+        }
+        FUN_022ea370(0x1e, 0x18, direction, uVar29);  // 30-frame hold, no effect
+    } else {
+        if (monster->apply_flash_fire_boost == '\0') {
+            LogMessageByIdWithPopupCheckUserTarget(attacker, defender, DAT_02309fc4);
+        }
+        FUN_022e576c(attacker, (int)defender);  // miss/block sound only
+    }
+    damage_data->no_damage = '\x01';
+    bVar8 = '\0';
+}
+```
+
+Zero damage only arises from the two hardcoded true-immunity paths (Flash Fire,
+Levitate/floating), never from the type chart. So a genuinely immune hit produces the
+miss/block sound and no burst, while a chart-`MATCHUP_IMMUNE` hit deals half damage and
+plays effect 8 normally.
+
+> See `Systems/type_matchup_pipeline.md` → "True Immunity (Zero Damage)".
 
 ## Reset to Idle (FUN_02304a48)
 
@@ -241,6 +283,9 @@ Client implementations that want competitive snappiness should either paralleliz
 
 ## Cross-References
 
+> See `Systems/type_matchup_pipeline.md` for the type chart, multipliers, and how
+> `damage_data->type_matchup` is derived
+
 > See `Systems/move_effect_pipeline.md` for the move animation system that precedes damage
 
 > See `Data Structures/animation_control.md` for CHARA animation group 6 (Hurt)
@@ -261,8 +306,8 @@ The WAN frame flag `(flags & 2)` in `FUN_023250d4` triggers `FUN_02325644`, whic
 
 ## Open Questions
 
-- Visual verification of effects 8-11 in extracted data
-- What `FUN_0230d618` maps matchup values to when effectiveness is hidden
+- Whether the extracted sprites for 8–11 match what the ROM renders (scraper verification,
+  not a ROM question — see `Data Structures/effect_animation_info.md`)
 - Whether `PlayEffectAnimationEntity` params 3-7 affect rendering (position, z-order, etc.)
 
 ## Functions Used
