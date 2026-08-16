@@ -178,7 +178,11 @@ The 24×24 trap cell matches the dungeon chunk size; the 16×16 item cell does *
 
 ### Sprite/palette usage
 
-`(sprite_id, palette_id)` from `item_p` is the full appearance key. In the US ROM: **56 distinct sprite ids used (max 62, of 64 available), 210 distinct pairs across 1311 valid items.**
+`(sprite_id, palette_id)` from `item_p` is the full appearance key **for menus and
+ground items**. In-flight line-thrown items override `sprite_id` per direction — see
+`Items/thrown_item_visuals.md` → "Directional Spike Sprites". Sprites `0x15` and `0x16`
+are the dedicated vertical and horizontal spike shapes and are referenced only by that
+override, never by an `item_p` entry.
 
 Worked examples:
 
@@ -255,12 +259,15 @@ Export one atlas per container: row = sprite id, column = palette id, cell size 
 
 - **Trap names.** `traps.trp.img` has 35 sprites but no `item_p`-equivalent name table was located; no `text_e.str` block matching "trap" was found. Canonical ordering is `enum trap_id` in pret/pmd-sky (`include/trap.h`); the last few entries are likely stairs/marker graphics rather than traps proper. Currently exported as `trap_00`…`trap_34` placeholders.
 - **`TABLEDAT/itemNN.dat`.** 16 files, one per category, loaded by overlays 3/4 via a single format string. Contents are `u16` pairs; purpose unconfirmed.
-- **`dungeon.bin[1028]` (`1028.wan.bin`).** Likely the in-world ground-object sprite bank (the `DUNGEON/sub_obj.wan` analogue). Not yet opened — relevant if the client needs items as they appear lying on the floor rather than as menu icons.
-- **8 unused sprite ids** in `items.itm.img` (56 of 64 referenced, max used 62). Free-standing art with no canon name.
+- **`dungeon.bin[1028]` (`1028.wan.bin`).** Likely the in-world ground-object sprite bank (the `DUNGEON/sub_obj.wan` analogue). Not yet opened. **Lower priority than previously assumed:** both ground items and in-flight thrown items render from `items.itm.img` via `GetItemSpriteId`/`GetItemPaletteId`, so no WAN bank is needed for either.
+- **8 unused sprite ids** in `items.itm.img` (56 of 64 referenced, max used 62). Free-standing art with no canon name. Note `0x15` (21) and `0x16` (22) are *not* unused despite having no `item_p` reference — they are the vertical and horizontal thrown-spike shapes, reached only via the directional override in `FUN_023457c8`. Sprite `0x17` (23) is likewise reachable via `dungeon[0x1A245]`.
 - **Trap palette 1.** Two palettes exist; the second is presumed the revealed/highlighted variant but this is not confirmed against the renderer.
 - **`item_p` offsets 0x6–0x7.** pret marks this `fill5` but it holds the item id, redundant with the array index. Whether any code reads it is unverified.
 
 ## Cross-References
+
+> See `Items/thrown_item_visuals.md` for how these sprites and palettes are consumed at
+> render time, including the per-direction sprite override for thrown spikes.
 
 > See `Data Structures/dungeon_tileset_spec.md` for the `dungeon.bin` container access pattern and the 24×24 chunk convention that trap icons follow.
 
