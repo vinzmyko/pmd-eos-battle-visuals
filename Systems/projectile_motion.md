@@ -656,9 +656,16 @@ For accurate projectile recreation:
 
 > See `Systems/effect_lifecycle.md` for FUN_022bf4f0 tick function details
 
-## Open Questions
+> See `Items/thrown_item_visuals.md` for **thrown item** motion, which is a separate
+> system. Line-thrown items travel flat at 6 frames/tile; arc-thrown items use a
+> half-sine parabola. Neither uses the `FUN_022beb2c` gravity arc documented here.
 
-- Purpose of FUN_0234b4cc calls (enable/disable something)
+## Resolved Questions (cont.)
+
+### `FUN_0234b4cc`
+**Resolved:** writes a single global byte at `*(DAT_0234b4dc + 4) + 0xC8A`, set to 1 for
+the duration of an animation sequence and 0 after. An animation/input lock. It brackets
+both thrown-item flight handlers identically. See `Items/thrown_item_visuals.md`.
 
 ## Resolved Questions
 
