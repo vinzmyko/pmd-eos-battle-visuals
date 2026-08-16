@@ -29,7 +29,8 @@ struct entity {
 enum entity_type {
     ENTITY_NOTHING = 0,
     ENTITY_MONSTER = 1,
-    ENTITY_ITEM = 2,
+    ENTITY_ITEM = 2,        // item lying on the floor (pool at dungeon + 0x12BC8)
+    ENTITY_THROWN_ITEM = 3, // in-flight thrown item; single scratch entity at dungeon + 0xCC
     // ... other types
 };
 ```
@@ -96,6 +97,7 @@ When `entity->type == ENTITY_MONSTER`, the `entity->info` pointer points to mons
 | 0x167 | uint8_t | flag | Related to move execution |
 | 0x170 | uint8_t | flag | Cleared for specific moves |
 | 0x23F | uint8_t | flag | Checked in move targeting |
+| 0xBC | uint8_t | unknown | Read by `DoesProjectileHitTarget`: value 7 makes thrown items always miss. Purpose unidentified. |
 | 0xBD | uint8_t | sleep_class_status | Sleep class (0=none, 1=sleep, 2=sleepless, 3=nightmare, 4=yawning, 5=napping) |
 | 0xBE | uint8_t | sleep_counter | Duration counter for sleep class |
 | 0xBF | uint8_t | burn_class_status | Burn class (0=none, 1=burn, 2=poison, 3=badly_poisoned, 4=paralysis) |
@@ -263,7 +265,7 @@ for (iVar6 = 0; iVar6 < 0x3f; iVar6++) {
 - `func_0x01ffb658` (AI move decision, ITCM `0x01FFB658`): inferred to auto-dispatch held move when `info[0xD2] != 0 && != 1`, but undecompilable without loading ITCM region into Ghidra. Verification requires either runtime debugger inspection (DeSmuME / No$GBA) or proper ITCM memory block setup.
 - Player-side turn-2 auto-dispatch: must exist in the player input path (the leader doesn't go through `RunMonsterAi`). Find via xrefs to `info[0xD2]` reads outside AI code.
 - `DoMoveShadowForce` passes `defender` (not `attacker`) as the status recipient to `FUN_02318bbc`, applying the charge to the target. Won't round-trip through `IsChargingTwoTurnMove(attacker,…)`; likely buggy/vestigial or a mislabel. Confirm in-game.
-- `entity[0x1C]`: the second offset subtracted alongside `info[0x188]` in the `FUN_02303f18` draw-Y calc. General bob/elevation? Not traced.
+> Resolved: `entity[0x1C]` is the generic per-entity vertical render offset (8.8 fixed), subtracted from draw-Y. For the thrown-item scratch entity it carries the arc height; larger = drawn higher. See `Items/thrown_item_visuals.md` → "Scratch Entity".
 
 > Resolved: airborne hiding is the `info[0x188]` render-Y ramp (`FUN_023046e8`) + viewport cull; `FUN_02318d58` is fully documented and is called from the `DoMove*` release branch. See `Systems/move_effect_pipeline.md` → "Two-Turn Vanish & Elevation Mechanism".
 - Airborne sprite hiding mechanism for `info[0x10B] == 1` (Fly, Bounce, Sky Drop). The renderer only gates on value 2; value 1 sprites still draw. Candidate mechanisms: `entity->elevation` Z-offset, `pixel_pos.y` shift, `entity->is_visible`, `monster->uturn_hide_monster_flag`, or `info[0x165]`. Investigate the Fly/Bounce `DoMove` handlers in the dispatch jumptable at `0x0232f8b8`.
