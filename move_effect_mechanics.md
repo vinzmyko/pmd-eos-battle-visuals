@@ -325,7 +325,7 @@ Some identified cases:
 | 0x15 | `FUN_0231a8a0` | Unknown (candidate for move execution) |
 | 0x17 | `FUN_022f6058` | Unknown (param 0x160) |
 | 0x23 | `thunk_FUN_022f52bc` | Unknown |
-| 0x24 | `UseThrowableItem` | Throw item |
+| 0x24 | `UseThrowableItem` | Throw item (`0x022f54bc`) — see `Items/thrown_item_visuals.md` |
 | 0x25 | `TryTriggerTrap` | Trigger trap |
 | 0x26 | stairs/floor transition | Use stairs |
 | 0x27 | item throw path | Item throw (alt) |
@@ -391,6 +391,10 @@ call at `022f4e84` indicate unanalyzed code. Re-disassembly starting at `022f4e9
 > See `Moves/reflect_moves.md` for Counter / Magic Coat and the bounce enforcement
 
 > See `Moves/baton_pass.md` for `DoMoveSwitchPositions`
+
+> See `Items/thrown_item_visuals.md` for the thrown-item path off `ExecuteMonsterAction`
+> case 0x24, and for `PROJECTILE_MOVE_ID` (0x195), the synthetic move used by
+> line-thrown items
 
 ---
 
