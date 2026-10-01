@@ -487,7 +487,7 @@ struct effect_context {
     /* 0x04 */ int32_t caller_context;
     /* 0x08 */ int32_t anim_type;
     /* 0x0C */ int32_t instance_id;
-    /* 0x10 */ int32_t wan_ptr;
+    /* 0x10 */ int32_t sequence_count;   // WAN sequence count; directional if % 8 == 0
     /* 0x14 */ int32_t effect_id;
     /* 0x18 */ int32_t unknown_0x18;
     /* 0x1C */ int32_t direction;
@@ -495,6 +495,8 @@ struct effect_context {
     /* 0x22 */ int16_t current_y;
     /* 0x24 */ int16_t velocity_x;
     /* 0x26 */ int16_t velocity_y;
+    /* ... */
+    /* 0x2C */ int32_t draw_order;       // DAT_022bf75c sentinel = compute from own Y; see meta_frame_rendering.md
     /* ... */
     /* 0x40 */ int32_t stored_anim_type;
     /* 0x44 */ int32_t file_index;
@@ -504,6 +506,8 @@ struct effect_context {
     /* 0x5C */ int32_t timing_value;
     /* 0x60 */ uint8_t is_non_blocking;
     /* 0x61 */ uint8_t loop_flag;
+    /* ... */
+    /* 0x68 */ animation_control anim_ctrl;  // draw_order copied to +0xA0 (anim_ctrl + 0x38) each tick by FUN_022bf4f0
     /* ... */
     /* 0x128 */ int16_t source_x;
     /* 0x12A */ int16_t source_y;
