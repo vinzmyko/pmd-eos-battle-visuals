@@ -108,6 +108,12 @@ short screen_y = (*(int *)(entity + 0x10) >> 8) - camera_y;
 *(short *)(entity + 0x48) = screen_x;  // Base X for renderer
 *(short *)(entity + 0x4a) = screen_y;  // Base Y for renderer
 
+// Draw order: feet screen Y / 2, ignoring elevation and hop offsets
+short draw_order = ((*(int *)(entity + 0x10) >> 8) - camera_y) / 2;
+if (!monster->display_shadow) draw_order -= 1;
+*(short *)(entity + 0x64) = draw_order;  // animation_control (+0x2C) + 0x38
+FUN_022e6e80(entity, draw_order);        // base for bound effects' draw order
+
 // Also updates monster->pixel_pos for other systems
 monster->pixel_pos.x = attachment_offset_x + (entity_pixel_x >> 8);
 monster->pixel_pos.y = attachment_offset_y + (entity_pixel_y >> 8);
@@ -127,6 +133,7 @@ Relevant offsets for sprite positioning:
 | 0x22 | i16 | sprite_offset_y | SequenceFrame offset Y |
 | 0x24 | i16 | shadow_offset_x | Shadow-specific offset X |
 | 0x26 | i16 | shadow_offset_y | Shadow-specific offset Y |
+| 0x38 | i16 | draw_order | Sort key for the renderer's bucket list; higher draws in front. Pokémon: feet screen Y / 2. Effects: copied from `effect_context + 0x2C`. See `meta_frame_rendering.md` → "Draw Order Sources" |
 
 ---
 
