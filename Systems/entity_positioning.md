@@ -267,7 +267,7 @@ iVar1 = FUN_022befd8((int)(short)*puVar2);  // reads effect_context + 0x28
 
 ### Per-Frame Position Sync (FUN_022e6e80)
 
-Called per entity each frame. Iterates all 3 binding slots, updates any effect bound to that entity.
+Called per entity each frame from `FUN_02303f18` as `FUN_022e6e80(entity, draw_order)`. `param_2` is the entity's draw order (feet screen Y / 2; see `positioning_system.md`), forwarded to `FUN_022bfb6c` as the base for bound effects' draw order. Iterates all 3 binding slots and updates any effect bound to that entity.
 
 **Steps:**
 1. Read entity pixel position: `entity + 0x0C` (x) and `entity + 0x10` (y), shifted >> 8
@@ -296,22 +296,24 @@ Writes entity position and attachment offset into the effect context.
 | +0x22 (current_y) | entity pixel_y >> 8 | Same condition |
 | +0x24 | attachment_offset_x | If attachment_point != -1 |
 | +0x26 | attachment_offset_y | If attachment_point != -1 |
-| +0x2C (z_priority) | Varies by bind_type and directionality | See below |
+| +0x2C (draw_order) | Bound entity's draw order + adjustment | See below |
 
 **Position override:** If effect_context + 0x136 is nonzero, position comes from +0x138 instead of entity. This is how projectiles detach from entity tracking after launch.
 
-**Z-priority logic** (in priority order — first match wins):
+**Draw order logic** (in priority order; first match wins). `entity_draw_order` is `param_4` of `FUN_022bfb6c`: the bound entity's draw order (feet screen Y / 2), passed down from `FUN_02303f18` via `FUN_022e6e80`. Earlier versions of this doc called this value `cam_z`.
 
-1. **bind_type 6 (primary):** unconditionally `cam_z + 1`. Bypasses the directional table entirely. This means primary-layer hit visuals always render in front of the target regardless of facing.
-2. **Directional effect** (`effect_context + 0x10 & 7 == 0`): `cam_z + DIRECTION_Z_TABLE[entity_direction & 7]`. Used for charge (bind 5), secondary (bind 1), projectile (bind 2).
-3. **Non-directional:** `cam_z + 1`.
+1. **bind_type 6 (primary):** unconditionally `entity_draw_order + 1`. Bypasses the directional table entirely, so primary-layer hit visuals always draw in front of the target regardless of facing.
+2. **Directional effect** (`effect_context + 0x10` % 8 == 0): `entity_draw_order + DIRECTION_DRAW_ORDER_TABLE[entity_direction & 7]`. Used for charge (bind 5), secondary (bind 1) and projectile (bind 2).
+3. **Non-directional:** `entity_draw_order + 1`.
 
-**Implementation note for client implementers:** rule 1 is easy to miss. A client that applies the directional table to all entity-bound effects will produce a Z value of `-1` for primaries when the target faces Up/Up-Left/Up-Right (after `face_toward(attacker)` for an attacker positioned below). Combined with Y-sort, this places the primary visual behind the target — visible bug. Bind type 6 must short-circuit the directional table.
+`FUN_022bf4f0` copies `+0x2C` into the effect's `animation_control + 0x38` every tick, where it becomes the base of the bucket index in the meta-frame renderer. Each fragment's `draw_order_offset` is added on top. See `meta_frame_rendering.md` → "Draw Order Sources".
 
-**DIRECTION_Z_TABLE** is pointed to by `DAT_022bfc58` (pointer at `0x022BFC58`). The table itself lives at `0x022C7890` and contains 8 × int32 entries:
+**Implementation note for client implementers:** rule 1 is easy to miss. A client that applies the directional table to all entity-bound effects gives primaries an offset of −1 when the target faces Up/Up-Left/Up-Right (after `face_toward(attacker)` for an attacker positioned below), which puts the primary visual behind the target: a visible bug. Bind type 6 must short-circuit the directional table.
 
-| Index | Direction | Z Offset |
-|-------|-----------|----------|
+**DIRECTION_DRAW_ORDER_TABLE** (previously called `DIRECTION_Z_TABLE`) is pointed to by `DAT_022bfc58` (pointer at `0x022BFC58`). The table itself lives at `0x022C7890` and contains 8 × int32 entries:
+
+| Index | Direction | Draw order offset |
+|-------|-----------|-------------------|
 | 0 | Down | +1 |
 | 1 | Down-Right | +1 |
 | 2 | Right | +1 |
@@ -321,13 +323,13 @@ Writes entity position and attachment offset into the effect context.
 | 6 | Left | +1 |
 | 7 | Down-Left | +1 |
 
-**Semantic pattern:** directions 3/4/5 (the "away-facing" upward directions) produce a Z offset of -1, placing the effect behind the entity. All other directions produce +1, placing the effect in front. This matches the expected behaviour of a charge effect anchored to the attacker's back — it renders behind when the attacker faces away from the camera and in front when facing toward it.
+**Semantic pattern:** directions 3/4/5 (facing away from the camera) give −1, placing the effect behind the entity. All other directions give +1, placing it in front. This matches a charge effect anchored to the attacker's back.
 
-**Empirical note (render reality):** the ±1 above is the value written to `effect_context + 0x2C`, which the meta-frame renderer never reads (confirmed via `FUN_0201b6d4` disassembly — see `meta_frame_rendering.md`). ROM observation of Solar Beam's charge (effect 247, `attachment_point = -1`, anchored at the entity origin) shows it renders **behind the attacker in all 8 directions**, not front-when-facing-down. On-screen layering is Y-sort only; the directional table does not flip charge front/back. A client should render ground-anchored charge effects behind the entity unconditionally rather than driving z from this table.
+**Empirical note (Solar Beam):** in the ROM, Solar Beam's charge (effect 247, `attachment_point = -1`) draws behind the attacker in all 8 directions. This comes from its fragments, not the directional table. Effect 247's fragments are `{-5: 24, 0: 12}`: two thirds have `draw_order_offset = −5`, which puts them 4–6 buckets behind the attacker whatever its direction. Earlier versions of this note concluded that `+0x2C` is never read by the renderer; that was wrong.
 
-**Evidence:** `FUN_022bfb6c` at `0x022bfbf4` loads the pointer, then `ldmia r6!, {r0-r3}` + `ldmia r6, {r0-r3}` at `0x022bfbfc-0x022bfc08` reads all 8 entries (32 bytes) into a stack buffer before indexing with `param_5 & 7`. Confirmed table contents via direct memory inspection at `0x022C7890`.
+**Evidence:** `FUN_022bfb6c` at `0x022bfbf4` loads the pointer, then `ldmia r6!, {r0-r3}` + `ldmia r6, {r0-r3}` at `0x022bfbfc-0x022bfc08` reads all 8 entries (32 bytes) into a stack buffer before indexing with `param_5 & 7`. Table contents confirmed via direct memory inspection at `0x022C7890`.
 
-**Branch gate:** The directional path is only taken when `(effect_context + 0x10) & 7 == 0`. In practice this is always true for WAN-backed effects because `+0x10` (wan_ptr) is pointer-aligned. Note this gate is checked **after** the bind_type 6 short-circuit — primaries skip the gate entirely.
+**Branch gate:** the directional path is only taken when `(effect_context + 0x10) & 7 == 0`. `+0x10` holds the WAN **sequence count** (written by `FUN_022bdfc0`; see `animation_selection.md`), so this is the same `sequence_count % 8 == 0` directionality test used for animation selection. `FUN_022bf4f0` applies the same test. Earlier versions of this doc treated `+0x10` as a pointer and the gate as always true; that was wrong. The gate is checked **after** the bind_type 6 short-circuit, so primaries skip it entirely.
 
 ### Cleanup (FUN_022e6dd0)
 
@@ -335,18 +337,22 @@ Iterates all 3 slots. If `AnimationHasMoreFrames` returns false for a slot's eff
 
 ### Complete Per-Frame Pipeline
 ```
-FUN_022e6e80 (per entity)
-  │  entity->pixel_pos >> 8
-  │  FUN_0201cf90(entity->anim_ctrl, attachment_index)
-  └──► FUN_022bfb6c
-         writes effect_context + 0x20/0x22 (base position)
-         writes effect_context + 0x24/0x26 (attachment offset)
-              │
-              ▼
+FUN_02303f18 (per entity)
+  │  draw_order = feet screen Y / 2  → entity + 0x64 (animation_control + 0x38)
+  └──► FUN_022e6e80(entity, draw_order)
+         │  entity->pixel_pos >> 8
+         │  FUN_0201cf90(entity->anim_ctrl, attachment_index)
+         └──► FUN_022bfb6c
+                writes effect_context + 0x20/0x22 (base position)
+                writes effect_context + 0x24/0x26 (attachment offset)
+                writes effect_context + 0x2C (draw_order = entity draw order ±1)
+                     │
+                     ▼
 FUN_022bf4f0 (per effect, each tick)
   │  reads +0x24/0x26 as attachment offset
   │  checks for (99, 99) special case
   │  render_pos = (base_pos - camera) + attachment_offset
+  │  +0x2C → animation_control + 0x38 (own Y / 2 ± 3 if unbound sentinel)
   └──► FUN_0201cf5c → FUN_0201c5c4 (render)
 ```
 
