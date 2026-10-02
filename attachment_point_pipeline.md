@@ -143,7 +143,7 @@ For projectiles, the decay turns a (99, 99) launch offset into about (82, 81) af
 | Layer 2 initial spawn | Target | No | No |
 | Layer 2 per-frame track | Target | No | No |
 | Layer 1 (secondary) | Target | Yes (per-species) | Caller-dependent |
-| Layer 3 (projectile) | **Attacker**, once at launch | Yes (per-species) | Tick skips draw; decay mangles it |
+| Layer 3 (projectile) | **Attacker**, once at launch (attack loop's break frame) | Yes (per-species) | Tick skips draw; decay mangles it |
 | PlayEffectAnimationEntity | Entity param | No | **Yes** |
 
 ## Implementation Guidance

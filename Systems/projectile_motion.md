@@ -62,6 +62,8 @@ FUN_022be9e8(&{anim_id, species, px >> 8, py >> 8, launch.x, launch.y, dir, 0}, 
 
 The attachment index is the **move's** `attachment_point_idx` (0x11), not the effect's `field_0x19`. `FUN_022be9e8` stores the same index (via the identical `FUN_022bf088`) at `ctx + 0x28`.
 
+**Launch pose:** `o₀` is read from the attacker's current frame when `FUN_02322f78` runs. `FUN_023250d4` ends its attack loop on the first frame with WAN flag `0x1` (return point), when entity byte `+0x21` is set, or after 120 frames. Nothing resets the pose between that and `FUN_023230fc`. Types 98/99 end on `walk` (anim 0) in the original direction, 2 frames in.
+
 **Spawn param mapping** (stack in `FUN_02322f78` → `param_1` in `FUN_022be9e8` → context):
 
 | Stack | `param_1[i]` | Context |
@@ -328,6 +330,8 @@ else if (R == 1 && FUN_022e2ca0(end_tile)) { FUN_022ea370(1, 0x4A); PlayMoveAnim
 
 With R == 1 and no target, the primary still plays on the empty end tile.
 
+Back in `FUN_02322374`: `FUN_02304b14`, then up to 100 frames (`'J'`) waiting while `FUN_0201d1b0` reports the attacker's animation still running. The attack animation keeps playing during the flight; the attacker does not return to idle before launch.
+
 ## Trigonometry
 
 - 4096 units per turn, maths convention: 0 = right, 0x400 = up, 0xC00 = down
@@ -401,6 +405,7 @@ both thrown-item flight handlers identically. See `Items/thrown_item_visuals.md`
 - **Decompiler artifacts:** the amplitude/phase divisor is `T × fc` (`local_64 × frame_count`), not `R × fc`
 - **Pattern 2:** a fixed-direction sideways bulge; angle mask is 0xFFF
 - **Draw order:** explicit bias table, not the unbound sentinel
+- **Launch pose:** the attack loop's break frame (first return frame), not idle and not the animation's last frame
 
 ## Open Questions
 

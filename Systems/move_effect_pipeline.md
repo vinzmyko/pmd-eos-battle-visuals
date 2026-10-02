@@ -554,22 +554,27 @@ int FUN_022be9e8(ushort *param_1, undefined2 *param_2, ...)
 ## Projectile Spawn Call Chain
 
 ```
-FUN_02322374 (strike loop)
+FUN_02322374 (strike loop, per strike)
     │  R = GetMoveRangeDistance(user, move, 1)
-    │  wave = FUN_02322ddc(...)            // flags & 7 via FUN_02324e78
+    │
+    ├─► FUN_02322ddc → FUN_023250d4 (attack animation)
+    │       returns wave (flags & 7 via FUN_02324e78)
+    │       pose left on the loop's break frame (first return frame), no idle reset
     │
     ├─► R == 0: ExecuteMoveEffect (no flight)
     │
-    └─► R > 0: FUN_023230fc(user, move, R, wave, ..., flag_bit3)
-            │
-            ├─► pre-walk to first wall/monster (T tiles)
-            ├─► FUN_02322f78 (spawn)
-            │       ├─► GetBodySize gate (≥ 4 with R == 1 → no effect)
-            │       ├─► FUN_022bf01c (move attachment index)
-            │       ├─► FUN_0201cf90 (attacker launch offset → ctx 0x24/0x26)
-            │       └─► FUN_022be9e8 → FUN_022be780(2) → FUN_022be730
-            ├─► flight loop: FUN_022beb2c per frame, hit checks per tile
-            └─► ExecuteMoveEffect(target list)
+    ├─► R > 0: FUN_023230fc(user, move, R, wave, ..., flag_bit3)
+    │       │
+    │       ├─► pre-walk to first wall/monster (T tiles)
+    │       ├─► FUN_02322f78 (spawn)
+    │       │       ├─► GetBodySize gate (≥ 4 with R == 1 → no effect)
+    │       │       ├─► FUN_022bf01c (move attachment index)
+    │       │       ├─► FUN_0201cf90 (launch offset from the break-frame pose → ctx 0x24/0x26)
+    │       │       └─► FUN_022be9e8 → FUN_022be780(2) → FUN_022be730
+    │       ├─► flight loop: FUN_022beb2c per frame, hit checks per tile
+    │       └─► ExecuteMoveEffect(target list)
+    │
+    └─► FUN_02304b14, then wait ≤ 100 frames ('J') for the attacker's animation (FUN_0201d1b0)
 ```
 
 > See `Systems/projectile_motion.md` for the full flight model.
@@ -660,23 +665,30 @@ Types 98 and 99 are special monster animation modes that use a simplified effect
 ### Key Differences from Normal Animations
 
 **Normal Animations (types 0-12):**
-```c
+````c
 ChangeMonsterAnimation(entity, anim_type, direction);
+entity[0x21] = 0;
 
 for (frame = 0; frame < 0x78; frame++) {
     AdvanceFrame('Y');
-    flags = FUN_0201d1d4(entity + 0xb);  // Read WAN frame flags
-    
-    // HIT FRAME: bit 2 triggers effect spawning
-    if ((flags & 2) != 0 && !effect_spawned) {
-        FUN_02325644(&params, entity, move, ...);  // Spawn effect on hit frame
+    flags = FUN_0201d1d4(entity + 0xb);  // Current WAN frame flags
+    if (anim_type == 0 || anim_type == 7 || anim_type == 9) flags |= 0x2;  // forced hit
+
+    // HIT: flag 0x2 (WAN hit point) spawns the secondary layer once
+    if ((flags & 0x2) != 0 && !effect_spawned) {
+        FUN_02325644(&params, entity, move, ...);
         effect_spawned = true;
     }
-    
-    // ANIMATION COMPLETE: bit 1
-    if ((flags & 1) != 0) break;
+
+    // RETURN: flag 0x1 (WAN return point), or entity byte 0x21 set
+    if ((flags & 0x1) != 0 || entity[0x21] != 0) break;
 }
-```
+entity[0x21] = 0;
+if (flag_bit_6) AnimationDelayOrSomething(1);
+// No idle reset: the pose at the break frame is what FUN_023230fc samples.
+````
+
+WAN flag bits: `0x1` return point, `0x2` hit point. The animation keeps playing after the loop breaks; `FUN_02322374` waits for it after the move resolves.
 
 **Type 99 (Spin) - Effect spawns once, animation loops:**
 ```c
@@ -1104,6 +1116,7 @@ Classes: Fly 7, Bounce 8, Dive 9, Dig 0xA, Shadow Force 0xD. Shadow Force passes
 ## Open Questions
 
 - How layer 0 (charge) timing relates to two-turn moves
+- What sets entity byte `+0x21`, the attack loop's second exit condition (likely the animation system marking a non-looping animation finished)
 - Exact ordering inside `FUN_02322374` of (a) charge state set via `FUN_02318bbc` and (b) animation lookup via `PlayMoveAnimation`. Empirically the charge animation plays on turn 1, implying the lookup happens before the state-set, but the call ordering hasn't been traced.
 
 ## Functions Used
