@@ -2,7 +2,7 @@
 
 ## Summary
 
-- Attachment points are always read from the **target** entity, never the attacker
+- Bound layers read the attachment point from the entity they are bound to (usually the target); projectiles read the **attacker** once, at launch
 - `effect_animation_info.field_0x19` selects which point index (0-3) or disables attachment (0xFF)
 - Layer 2 (primary) effects track the target's attachment point every frame via `FUN_022e6e80`
 - The (99, 99) sentinel is only handled in `PlayEffectAnimationEntity`, not in the `PlayMoveAnimation` → Layer 2 path
@@ -103,7 +103,7 @@ if (uVar2 == 0xffffffff) {
 }
 ```
 
-Note: Projectile attachment reads from the **attacker** (`param_1 + 0xb`), not the target. This is the origin point of the projectile.
+Note: Projectile attachment reads from the **attacker** (`param_1 + 0xb`), once, at launch. The index is the move's `attachment_point_idx`, not the effect's `field_0x19`. The offset is written to `ctx + 0x24/0x26` and decays toward (0, −9) every frame; it is never re-read from the attacker or applied to the target. See `Systems/projectile_motion.md`.
 
 ## The (99, 99) Sentinel
 
@@ -128,15 +128,13 @@ if (iVar4 != 99 && param_4 != 99) {
 
 Semantics: (99, 99) means "use entity position directly, don't add any attachment offset." Each component is checked independently.
 
-### Where It Is NOT Handled
+### Render Tick
 
-- `PlayMoveAnimation` (Layer 2 primary) — passes raw values through
-- `FUN_022e6e80` (per-frame tracker) — passes raw values through
-- `FUN_022bfb6c` (effect context storage) — stores raw values
+`FUN_022bf4f0` checks each component of `ctx + 0x24/0x26`: if either is 99, the effect is **not drawn** that tick and its velocity is not applied. This differs from `PlayEffectAnimationEntity`, which falls back to the entity position.
 
-**Implication:** For Layer 2 primary effects, (99, 99) would be stored as a literal 99-pixel offset. This is either:
-1. Data that never occurs in practice for frames referenced by Layer 2 effects
-2. A minor ROM bug masked by brief effect durations
+`PlayMoveAnimation`, `FUN_022e6e80` and `FUN_022bfb6c` pass the raw value through, so a bound effect whose entity frame returns (99, 99) disappears for that frame.
+
+For projectiles, the decay turns a (99, 99) launch offset into about (82, 81) after one step, so the sentinel survives only for its undrawn first frame and the projectile is then drawn far down-right. Probable ROM bug.
 
 ## Summary Table: Who Reads What
 
@@ -145,7 +143,7 @@ Semantics: (99, 99) means "use entity position directly, don't add any attachmen
 | Layer 2 initial spawn | Target | No | No |
 | Layer 2 per-frame track | Target | No | No |
 | Layer 1 (secondary) | Target | Yes (per-species) | Caller-dependent |
-| Layer 3 (projectile) | **Attacker** | Yes (per-species) | No (uses default on 0xFFFFFFFF) |
+| Layer 3 (projectile) | **Attacker**, once at launch | Yes (per-species) | Tick skips draw; decay mangles it |
 | PlayEffectAnimationEntity | Entity param | No | **Yes** |
 
 ## Implementation Guidance
@@ -153,7 +151,7 @@ Semantics: (99, 99) means "use entity position directly, don't add any attachmen
 For the game client:
 
 1. **Layer 2 effects:** Read attachment point from target's current frame, add to target position. No sentinel handling needed.
-2. **Projectiles:** Read attachment point from attacker (this is the launch origin). Handle `FUN_022bf01c` returning -1 by using a default offset.
+2. **Projectiles:** Read the move's attachment point from the attacker once at launch; −1 means (0, 0) and no visible offset. Decay it each frame per `projectile_motion.md`. Never apply the target's attachment.
 3. **PlayEffectAnimationEntity path:** Check for (99, 99) and fall back to entity position with no offset.
 4. **Per-frame updates:** Re-read the target's attachment point each frame — don't cache the initial value.
 

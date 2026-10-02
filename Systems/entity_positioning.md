@@ -86,7 +86,7 @@ local_26 = (undefined2)((uint)param_1[4] >> 8);  // attacker->pixel_pos.y >> 8
 
 ### Projectile Destination Position
 
-Projectile ends at **target tile center**, using standard entity positioning offsets.
+Projectile ends at the **end tile** of the pre-walk (first wall or monster within range), using standard entity positioning offsets.
 
 | Component | Formula | Offset | Description |
 |-----------|---------|--------|-------------|
@@ -171,17 +171,7 @@ struct wan_offset {
 
 ### Attachment Points and Projectiles
 
-**Important:** Attachment points are looked up for projectiles but **NOT applied to the trajectory source position**. The projectile always starts at the attacker's pixel position regardless of attachment point.
-
-**Evidence:** `FUN_02322f78`
-```c
-// Attachment point calculated
-FUN_0201cf90(&sStack_24, (ushort *)(param_1 + 0xb), uVar2 & 0xff);
-
-// But source position taken directly from pixel_pos
-local_28 = (undefined2)((uint)param_1[3] >> 8);  // No attachment offset added
-local_26 = (undefined2)((uint)param_1[4] >> 8);
-```
+The attacker's attachment offset (move's `attachment_point_idx`) is not added to the trajectory. It seeds `ctx + 0x24/0x26`, which the render tick adds on top of the ground track and which decays toward (0, −9) every frame. The projectile therefore launches from the attachment point and drops toward the ground line. See `Systems/projectile_motion.md`.
 
 ### Attachment Points and Status Icons
 
@@ -298,12 +288,12 @@ Writes entity position and attachment offset into the effect context.
 | +0x26 | attachment_offset_y | If attachment_point != -1 |
 | +0x2C (draw_order) | Bound entity's draw order + adjustment | See below |
 
-**Position override:** If effect_context + 0x136 is nonzero, position comes from +0x138 instead of entity. This is how projectiles detach from entity tracking after launch.
+**Own velocity:** `+0x136/+0x138` are per-tick velocities. While either is nonzero, `FUN_022bfb6c` leaves the position alone so the effect drifts on its own (Razor Leaf). Projectiles are never registered with the binding table, so this path does not apply to them.
 
 **Draw order logic** (in priority order; first match wins). `entity_draw_order` is `param_4` of `FUN_022bfb6c`: the bound entity's draw order (feet screen Y / 2), passed down from `FUN_02303f18` via `FUN_022e6e80`. Earlier versions of this doc called this value `cam_z`.
 
 1. **bind_type 6 (primary):** unconditionally `entity_draw_order + 1`. Bypasses the directional table entirely, so primary-layer hit visuals always draw in front of the target regardless of facing.
-2. **Directional effect** (`effect_context + 0x10` % 8 == 0): `entity_draw_order + DIRECTION_DRAW_ORDER_TABLE[entity_direction & 7]`. Used for charge (bind 5), secondary (bind 1) and projectile (bind 2).
+2. **Directional effect** (`effect_context + 0x10` % 8 == 0): `entity_draw_order + DIRECTION_DRAW_ORDER_TABLE[entity_direction & 7]`. Used for charge (bind 5) and secondary (bind 1). Projectiles are never bound; `FUN_023230fc` writes their draw order directly (see `projectile_motion.md`).
 3. **Non-directional:** `entity_draw_order + 1`.
 
 `FUN_022bf4f0` copies `+0x2C` into the effect's `animation_control + 0x38` every tick, where it becomes the base of the bucket index in the meta-frame renderer. Each fragment's `draw_order_offset` is added on top. See `meta_frame_rendering.md` → "Draw Order Sources".

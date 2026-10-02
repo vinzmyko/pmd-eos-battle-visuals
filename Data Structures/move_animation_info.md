@@ -84,7 +84,7 @@ Bit field controlling animation behavior.
 
 | Bits | Mask | Accessor | Purpose |
 |------|------|----------|---------|
-| 0-2 | 0x07 | `FUN_022bfd58` | Projectile wave pattern (0=straight, 1=vertical sine, 2=spiral) |
+| 0-2 | 0x07 | `FUN_022bfd58` | Projectile wave pattern (0=straight, 1=vertical bump, 2=sideways bulge) |
 | 3 | 0x08 | `FUN_022bfd6c` | Dual-target effect (both attacker and target) |
 | 4 | 0x10 | `FUN_022bfd8c` | Skip fade-in effect |
 | 5 | 0x20 | `FUN_022bfdac` | Face direction + pre-animation delay |
@@ -98,8 +98,8 @@ Value is read by `FUN_022bfd58`, returned through the charge handler (`FUN_02324
 | Value | Pattern | Description |
 |-------|---------|-------------|
 | 0 | Straight | No wave offset, direct line |
-| 1 | Vertical Sine | Up-down oscillation perpendicular to travel |
-| 2 | Spiral | Circular/helical motion using two angles |
+| 1 | Vertical Bump | Half sine, screen-up, height `amp`, regardless of direction |
+| 2 | Sideways Bulge | Half sine, fixed direction 90° right of travel, size `amp / 2` |
 
 Previously thought to be determined at runtime — confirmed stored directly in move flags.
 
@@ -263,6 +263,9 @@ else if (iVar9 == 0x62) {
 | 1 | LeftHand | Offset to left hand |
 | 2 | RightHand | Offset to right hand |
 | 3 | Centre | Offset to body center |
+
+
+Also the **projectile launch point**: `FUN_02322f78` reads this index (with species override) to get the attacker's attachment offset, which seeds the projectile's decaying offset. −1 means no offset. See `Systems/projectile_motion.md`.
 
 **Evidence:** `FUN_022bf01c` reads and validates
 ```c

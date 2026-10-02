@@ -461,7 +461,7 @@ int FUN_022bed90(ushort *param_1, ...)
             // Spawn with dispatch type 1
             iVar7 = FUN_022be780(1, local_180 + iVar17 * 0xb, 0);
             
-            // Set flag at context + 0x136
+            // velocity_x = 6 px per tick (see effect_context.md)
             if (iVar15 != -1) {
                 *(context + 0x136) = 6;
             }
@@ -542,9 +542,9 @@ int FUN_022be9e8(ushort *param_1, undefined2 *param_2, ...)
         *(context + 0x12a) = source_y;
         *(context + 0x12c) = dest_x;
         *(context + 0x12e) = dest_y;
-        *(context + 0x130) = entity_id;
-        *(context + 0x132) = velocity_x;
-        *(context + 0x134) = velocity_y;
+        *(context + 0x130) = species_id;
+        *(context + 0x132) = launch_offset_x;   // snapshot of 0x24
+        *(context + 0x134) = launch_offset_y;   // snapshot of 0x26
     }
     
     return iVar11;
@@ -553,43 +553,26 @@ int FUN_022be9e8(ushort *param_1, undefined2 *param_2, ...)
 
 ## Projectile Spawn Call Chain
 
-The complete call chain for projectile spawning:
-
 ```
-FUN_02322374 (Move execution coordinator)
+FUN_02322374 (strike loop)
+    │  R = GetMoveRangeDistance(user, move, 1)
+    │  wave = FUN_02322ddc(...)            // flags & 7 via FUN_02324e78
     │
-    ├─► FUN_02322ddc (Returns wave pattern 0/1/2)
+    ├─► R == 0: ExecuteMoveEffect (no flight)
     │
-    └─► FUN_023230fc (Main projectile handler)
+    └─► R > 0: FUN_023230fc(user, move, R, wave, ..., flag_bit3)
             │
-            ├─► FUN_02322f78 (Spawns projectile effect)
-            │       │
-            │       ├─► FUN_022bf01c (Get attachment point index)
-            │       │
-            │       ├─► FUN_0201cf90 (Calculate attachment offset - NOT USED for position)
-            │       │
-            │       └─► FUN_022be9e8 (Layer 3 projectile setup)
-            │               │
-            │               └─► FUN_022be780 (Effect dispatcher, type 2)
-            │
-            └─► Animation loop (FUN_022beb2c per frame)
+            ├─► pre-walk to first wall/monster (T tiles)
+            ├─► FUN_02322f78 (spawn)
+            │       ├─► GetBodySize gate (≥ 4 with R == 1 → no effect)
+            │       ├─► FUN_022bf01c (move attachment index)
+            │       ├─► FUN_0201cf90 (attacker launch offset → ctx 0x24/0x26)
+            │       └─► FUN_022be9e8 → FUN_022be780(2) → FUN_022be730
+            ├─► flight loop: FUN_022beb2c per frame, hit checks per tile
+            └─► ExecuteMoveEffect(target list)
 ```
 
-### Key Functions in Chain
-
-| Function | Address (NA) | Purpose |
-|----------|--------------|---------|
-| `FUN_02322374` | `0x02322374` | Move execution coordinator, determines wave pattern |
-| `FUN_02322ddc` | `0x02322ddc` | Returns wave pattern (0/1/2) based on move logic |
-| `FUN_02322f78` | `0x02322f78` | Spawns projectile effect with position data |
-| `FUN_023230fc` | `0x023230fc` | Main forward projectile motion handler |
-| `FUN_0232393c` | `0x0232393c` | Reverse direction projectile handler |
-| `FUN_022be9e8` | `0x022be9e8` | Layer 3 projectile effect setup |
-| `FUN_022be780` | `0x022be780` | Main effect dispatcher |
-| `FUN_022bf01c` | `0x022bf01c` | Get attachment point index with override |
-| `FUN_022bf088` | `0x022bf088` | Get attachment point for species |
-| `FUN_0201cf90` | `0x0201cf90` | Calculate attachment point offset from WAN |
-| `FUN_022beb2c` | `0x022beb2c` | Update effect position during flight |
+> See `Systems/projectile_motion.md` for the full flight model.
 
 ## Effect Dispatch Types
 
@@ -603,7 +586,7 @@ The first parameter to `FUN_022be780` indicates the handler type. Types 1/2/5/6 
 | 6 | 2 (Primary) | 6 | Main visual | Move pipeline |
 | 7 | — | varies | Entity-positioned, hand-built params | Non-move (see effect_animation_info.md) |
 
-**Z-priority varies by bind type.** Bind type 6 (primary) unconditionally uses `cam_z + 1`; all others consult the directional table at `0x022C7890` when the effect is directional. See `entity_positioning.md` → "Z-priority logic" for the full rules and the implementation pitfall.
+**Draw order varies by layer.** Bind type 6 (primary) unconditionally uses `entity_draw_order + 1`; charge and secondary consult the directional table at `0x022C7890` when directional. Projectiles are never bound: `FUN_023230fc` sets their draw order every frame from `PROJECTILE_DRAW_ORDER_BIAS` (`0x02352A6C`). See `entity_positioning.md` and `projectile_motion.md`.
 
 ## Move Animation Flags
 
@@ -611,10 +594,10 @@ The first parameter to `FUN_022be780` indicates the handler type. Types 1/2/5/6 
 
 | Bits | Mask | Accessor | Purpose |
 |------|------|----------|---------|
-| 0-2 | 0x07 | `FUN_022bfd58` | Animation category (0-7) |
+| 0-2 | 0x07 | `FUN_022bfd58` | Projectile wave pattern (0 none, 1 vertical bump, 2 sideways bulge) |
 | 3 | 0x08 | `FUN_022bfd6c` | Dual-target effect |
 | 4 | 0x10 | `FUN_022bfd8c` | Skip fade-in effect |
-| 5 | 0x20 | `FUN_022bfdac` | Unknown |
+| 5 | 0x20 | `FUN_022bfdac` | Face direction + pre-animation delay |
 | 6 | 0x40 | `FUN_022bfdcc` | Add post-animation delay |
 | 7 | 0x80 | - | Unknown/unused |
 
@@ -1120,8 +1103,6 @@ Classes: Fly 7, Bounce 8, Dive 9, Dig 0xA, Shadow Force 0xD. Shadow Force passes
 
 ## Open Questions
 
-- Full purpose of animation category (flag bits 0-2)
-- What flag bit 5 controls
 - How layer 0 (charge) timing relates to two-turn moves
 - Exact ordering inside `FUN_02322374` of (a) charge state set via `FUN_02318bbc` and (b) animation lookup via `PlayMoveAnimation`. Empirically the charge animation plays on turn 1, implying the lookup happens before the state-set, but the call ordering hasn't been traced.
 

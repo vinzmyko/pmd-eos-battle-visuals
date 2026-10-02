@@ -57,7 +57,7 @@ Bits 12-15                → unused
 
 ## GetMoveRangeDistance Behavior
 
-`GetMoveRangeDistance` returns 0, 1, 2, or 10 — the projectile travel distance used by `FUN_023230fc` as `param_3` (drives outer-loop iteration count and amplitude branch).
+`GetMoveRangeDistance` returns 0, 1, 2, or 10: the **maximum** tiles a projectile walks (`param_3` of `FUN_023230fc`). 0 means no flight; `FUN_02322374` calls `ExecuteMoveEffect` directly. The actual flight length T stops at the first wall or monster. `param_3 < 2` selects the flat 32 amplitude, and `param_3 == 1` gates the large-body no-spawn rule and the empty-tile primary.
 
 **Only three AI range values produce a nonzero result. Everything else returns 0:**
 
