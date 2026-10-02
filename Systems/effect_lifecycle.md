@@ -338,10 +338,13 @@ if (effect_handle >= 0) {
 
 ## Open Questions
 
-- How does `delay_counter` (offset 0x18) get set initially?
-- What determines the value at `context + 0x3C` (runtime loop flag) vs `context + 0x61` (from table)?
 - Complete screen effect tick logic in `FUN_022bdf34`
-- Are there other context flag bits beyond bit 0?
+- Context flag bits 1-31 (`+0x3C`)
+
+## Resolved
+
+- `delay_counter` (`+0x18`) is word [1] of the dispatch struct copied by `FUN_022be44c`. Projectiles pass 0.
+- `+0x3C` (runtime loop flag) is word [10] of the same struct, set by the caller's template. `+0x61` comes from `effect_animation_info`. They are independent.
 
 ## Functions Used
 

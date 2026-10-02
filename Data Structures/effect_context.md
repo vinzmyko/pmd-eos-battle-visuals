@@ -7,7 +7,8 @@
 - Contains animation state, positioning, resources, and lifecycle flags
 - Embedded animation_control at offset 0x68 for WAN sprite playback
 - Screen effects (types 5/6) use different control structure at offset 0xE8
-- Projectile effects store trajectory data at offsets 0x128-0x134
+- 0x14-0x3F is a spawn block copied verbatim from the dispatch struct (effect_id, delay, direction, position, offset, attachment index, draw order, flags)
+- Projectile effects store trajectory data at 0x128-0x134; 0x136/0x138 are per-tick velocities
 
 ## Effect Pool
 
@@ -62,49 +63,71 @@ ptr[3] = iVar6;  // Assign to new effect's instance_id
 ## Structure Definition
 ```c
 struct effect_context {
-    /* 0x00 */ int32_t param_from_caller;
-    /* 0x04 */ int32_t caller_context;
-    /* 0x08 */ int32_t anim_type;          // 1-6 (0=invalid)
-    /* 0x0C */ int32_t instance_id;        // -1 = inactive/free slot
-    /* 0x10 */ int32_t wan_ptr;
-    /* 0x14 */ int32_t effect_id;          // Index into effect_animation_info
-    /* 0x18 */ int32_t delay_counter;      // Countdown before tick processes
-    /* 0x1C */ int32_t direction;          // 0-7 or -1
-    /* 0x20 */ int16_t current_x;          // Base position (entity pixel_x >> 8, or projectile pos)
-    /* 0x22 */ int16_t current_y;          // Base position (entity pixel_y >> 8, or projectile pos)
-    /* 0x24 */ int16_t offset_x;           // Dual-purpose: attachment offset OR projectile arc offset
-    /* 0x26 */ int16_t offset_y;           // Dual-purpose: attachment offset OR projectile arc offset
-    /* 0x28 */ int8_t  attachment_point;   // Copied from effect_animation_info, read by binding system
-    /* 0x2C */ int32_t z_priority;         // NOT OAM priority bits — see "z_priority Semantics" below
-    /* ... */
-    /* 0x3C */ uint32_t flags;             // Bit 0 = runtime loop flag
+    /* 0x00 */ int32_t param_from_caller;   // param_3 of FUN_022be780; passed to FUN_022bdfc0 as param_2
+    /* 0x04 */ int32_t dispatch_type;       // param_1 of FUN_022be780 (1 secondary, 2 projectile, 5 charge, 6 primary, 7 generic)
+    /* 0x08 */ int32_t anim_type;           // 1-6 (0=invalid)
+    /* 0x0C */ int32_t instance_id;         // -1 = inactive/free slot
+    /* 0x10 */ int32_t sequence_count;      // FUN_0201da20(wan_table_entry); % 8 == 0 → directional
+    // --- 0x14-0x3F: spawn block, 11 words copied verbatim from the dispatch struct ---
+    /* 0x14 */ int32_t effect_id;           // word [0]
+    /* 0x18 */ int32_t delay_counter;       // word [1]
+    /* 0x1C */ int32_t direction;           // word [2]; 0-7 or -1
+    /* 0x20 */ int16_t current_x;           // base position, world px (pixel_pos >> 8)
+    /* 0x22 */ int16_t current_y;
+    /* 0x24 */ int16_t offset_x;            // bound: attachment offset. projectile: launch offset, decays per frame
+    /* 0x26 */ int16_t offset_y;
+    /* 0x28 */ int8_t  attachment_point;    // -1 → tick ignores 0x24/0x26
+    /* 0x2C */ int32_t draw_order;          // 0xFFFF = unbound sentinel
+    /* 0x30 */ uint8_t spawn_tail[0x0C];    // template data, passed to FUN_0201d110 each drawn tick
+    /* 0x3C */ uint32_t flags;              // word [10]; bit 0 = runtime loop flag
+    // --- end spawn block ---
     /* 0x40 */ int32_t stored_anim_type;
     /* 0x44 */ int32_t file_index;
     /* 0x48 */ int32_t palette_index;
     /* 0x4C */ int32_t unknown_4c;
-    /* 0x50 */ int32_t animation_index;
+    /* 0x50 */ int32_t animation_index;     // + direction when directional
     /* 0x54 */ int32_t unknown_54;
     /* 0x58 */ int32_t sfx_id;
-    /* 0x5C */ int32_t timing_value;
-    /* 0x60 */ uint8_t is_non_blocking;    // Controls AnimationHasMoreFrames return
-    /* 0x61 */ uint8_t loop_flag;          // From effect_animation_info
-    /* 0x64 */ int16_t wan_table_entry;    // For cleanup
-    /* 0x68 */ animation_control anim_ctrl; // WAN animation state (~0x7C bytes)
+    /* 0x5C */ int32_t timing_value;        // delay_counter + effect_animation.field_0x14
+    /* 0x60 */ uint8_t is_non_blocking;
+    /* 0x61 */ uint8_t loop_flag;           // from effect_animation_info
+    /* 0x64 */ int16_t wan_table_entry;
+    /* 0x68 */ animation_control anim_ctrl; // 0x84/0x86 = screen x/y, 0xA0 = draw order (anim_ctrl + 0x38)
     /* ... */
-    /* 0xE4 */ int16_t screen_effect_handle; // For type 5/6
-    /* 0xE8 */ uint8_t screen_effect_ctrl[0x1C]; // Screen effect control structure
+    /* 0xE4 */ int16_t screen_effect_handle; // type 5/6
+    /* 0xE8 */ uint8_t screen_effect_ctrl[0x1C];
     /* ... */
-    /* 0x128 */ int16_t source_x;          // Projectile start X (screen pixels)
-    /* 0x12A */ int16_t source_y;          // Projectile start Y (screen pixels)
-    /* 0x12C */ int16_t dest_x;            // Projectile end X (screen pixels)
-    /* 0x12E */ int16_t dest_y;            // Projectile end Y (screen pixels)
-    /* 0x130 */ uint16_t entity_id;        // Attacker entity reference
-    /* 0x132 */ int16_t stored_velocity_x; // Copied from offset 0x24
-    /* 0x134 */ int16_t stored_velocity_y; // Copied from offset 0x26
-    /* 0x136 */ int16_t position_offset;   // Added to X each frame
-    /* 0x13A */ uint8_t unknown_13a;
+    /* 0x128 */ int16_t source_x;           // attacker pixel_pos.x >> 8
+    /* 0x12A */ int16_t source_y;
+    /* 0x12C */ int16_t dest_x;             // end tile * 24 + 12
+    /* 0x12E */ int16_t dest_y;             // end tile * 24 + 16
+    /* 0x130 */ int16_t species_id;         // attacker monster id (not an entity reference)
+    /* 0x132 */ int16_t launch_offset_x;    // copy of 0x24 at spawn, before any decay
+    /* 0x134 */ int16_t launch_offset_y;
+    /* 0x136 */ int16_t velocity_x;         // added to 0x20 after each drawn tick
+    /* 0x138 */ int16_t velocity_y;         // added to 0x22 after each drawn tick
+    /* 0x13A */ uint8_t unknown_13a;        // cleared by FUN_022bdfc0
 };
 // Size: 0x13C (316 bytes)
+```
+
+### Spawn Block
+
+`FUN_022be780` → `FUN_022be730` → `FUN_022be44c` (allocate) then `FUN_022bdfc0` (init). The allocator copies 11 words of the dispatch struct into `ctx + 0x14`; init never touches 0x14-0x3F.
+
+**Evidence:** `FUN_022be44c`
+```c
+ptr[2] = peVar3->field_0x0;   // anim_type
+ptr[1] = param_1;             // dispatch_type
+piVar1 = ptr + 5;             // ctx + 0x14
+// 2 × 4 words + 3 words = 11 words copied from param_2
+```
+
+**Evidence:** `FUN_022be730`
+```c
+iVar1 = FUN_022be44c(param_1, param_2, param_3);
+iVar2 = FUN_022be9a0((int)(short)iVar1);
+FUN_022bdfc0(base + iVar2 * 0x13c, *(int *)(base + iVar2 * 0x13c));  // param_2 = ctx[0x00]
 ```
 
 ## Key Fields
@@ -132,7 +155,7 @@ do {
 
 ### delay_counter (offset 0x18)
 
-Frames to wait before processing effect. Decrements each frame until 0.
+Frames to wait before processing effect. Decrements each frame until 0. Set from word [1] of the dispatch struct; projectiles pass 0.
 
 **Evidence:** `FUN_022bf4f0`
 ```c
@@ -191,64 +214,51 @@ if (param_2 != 0) {
 }
 ```
 
-### z_priority (offset 0x2C)
+### draw_order (offset 0x2C)
 
-Despite the name, this field is **not** the DS OAM priority (attr2 bits 10-11). Written by `FUN_022bfb6c` as `camera_z + direction_offset` (see `Systems/entity_positioning.md` "Z-priority logic"), but the meta-frame renderer (`FUN_0201c5c4` → `FUN_0201b6d4`) never reads this field.
+Read by `FUN_022bf4f0` on every drawn tick and written to `anim_ctrl + 0x38` (`ctx + 0xA0`), where it becomes the base of the OAM bucket index. The earlier claim that this field is never read was wrong.
 
-**What actually drives on-screen layering:**
-1. **DS OAM priority (2-bit)** — baked into WAN meta-frame piece data at piece[3]. Passes through the renderer unchanged. Used for BG layer separation (floor/entities/UI).
-2. **Within-layer ordering** — driven by sprite Y coordinate via a 256-bucket linked-list in `FUN_0200b6f0`. Lower Y → later insertion in bucket → drawn on top.
+| Value | Source | Used as |
+|-------|--------|---------|
+| `0xFFFF` (`DAT_022bf75c`) | template, unbound effects | tick computes `bias + (current_y − cam_y) / 2`; bias = −3 if directional and direction ∈ {3,4,5}, else +3 |
+| anything else | `FUN_022bfb6c` (bound), `FUN_022beb2c` (projectile) | used as-is |
 
-See `Systems/meta_frame_rendering.md` for the full OAM submission pipeline.
+### Render Tick (`FUN_022bf4f0`)
 
-**Where +0x2C IS consumed:** not in the render path — confirmed by full disassembly of `FUN_0201b6d4`. The OAM bucket index is computed as `param_3[3]` (sprite base screen Y) `+ piece Y offset`, clamped to `[0, 0x13F]`; the effect context is never passed into the renderer, so +0x2C cannot be read there. Likely consumers are visibility culling, effect tick dispatch order, or higher-level scene management. The ±1 directional nudge from the DIRECTION_Z_TABLE at `0x022C7890` implies it's used for a sort/compare somewhere, but that call site is outside the meta-frame renderer and remains unlocated. **Open question** — see below.
+```c
+off = (ctx[0x28] != -1) ? *(s16x2 *)(ctx + 0x24) : *(s16x2 *)0x022C787C;  // default (0, 0)
+if (off.x == 99 || off.y == 99) skip;           // not drawn, velocity not applied
+sx = off.x + (ctx[0x20] - cam_x);
+sy = off.y + (ctx[0x22] - cam_y);
+z  = (ctx[0x2C] == 0xFFFF) ? bias + (ctx[0x22] - cam_y) / 2 : ctx[0x2C];
+ctx[0x20] += ctx[0x136];  ctx[0x22] += ctx[0x138];
+if (-0x40 < sx < 0x13F && -0x40 < sy < 0x100) {
+    anim_ctrl.screen = (sx, sy);  anim_ctrl[0x38] = z;  draw;
+}
+```
+
+A 99 component means the frame is not drawn. This differs from `PlayEffectAnimationEntity`, which falls back to the entity position.
+
+### velocity_x / velocity_y (offsets 0x136, 0x138)
+
+Per-tick position deltas, added after each drawn tick. Razor Leaf sets `velocity_x = 6`. `FUN_022bfb6c` skips its position write while either is nonzero, so an effect with its own velocity is not dragged back to its bound entity.
 
 ## Projectile Trajectory Fields (0x128-0x134)
 
-These fields are populated by `FUN_022be9e8` (Layer 3 projectile handler) and used by `FUN_023230fc` for projectile motion.
-
-### source_x / source_y (offsets 0x128, 0x12A)
-
-Projectile starting position in screen pixels. Set from attacker's pixel position.
+Written by `FUN_022be9e8` immediately after spawn. Only `source`/`dest` are read: by `FUN_022beb2c`, for the decay divisor. See `Systems/projectile_motion.md`.
 
 **Evidence:** `FUN_022be9e8`
 ```c
-*(ushort *)(iVar10 + 0x128) = param_1[2];  // source_x from attacker
-*(ushort *)(iVar10 + 0x12a) = param_1[3];  // source_y from attacker
+*(ushort *)(ctx + 0x128) = param_1[2];   // attacker pixel_pos.x >> 8
+*(ushort *)(ctx + 0x12a) = param_1[3];   // attacker pixel_pos.y >> 8
+*(short  *)(ctx + 0x12c) = param_2[0];   // end tile * 24 + 12
+*(short  *)(ctx + 0x12e) = param_2[1];   // end tile * 24 + 16
+*(ushort *)(ctx + 0x130) = param_1[1];   // species id
+*(short  *)(ctx + 0x132) = *(short *)(ctx + 0x24);   // launch offset snapshot
+*(short  *)(ctx + 0x134) = *(short *)(ctx + 0x26);
 ```
 
-**Source calculation:** `attacker->pixel_pos.x >> 8` (8.8 fixed point to screen pixels)
-
-### dest_x / dest_y (offsets 0x12C, 0x12E)
-
-Projectile destination position in screen pixels. Set from target tile center.
-
-**Evidence:** `FUN_022be9e8`
-```c
-*(undefined2 *)(iVar10 + 300) = *param_2;    // dest_x (0x12C)
-*(undefined2 *)(iVar10 + 0x12e) = param_2[1]; // dest_y
-```
-
-**Destination calculation:** `(tile * 24 + offset) * 256 >> 8` where offset is +12 for X, +16 for Y
-
-### entity_id (offset 0x130)
-
-Reference to the attacker entity. Used for tracking which entity spawned the projectile.
-
-**Evidence:** `FUN_022be9e8`
-```c
-*(ushort *)(iVar10 + 0x130) = param_1[1];  // entity_id
-```
-
-### stored_velocity_x / stored_velocity_y (offsets 0x132, 0x134)
-
-Copied from velocity fields at offsets 0x24/0x26 during projectile setup.
-
-**Evidence:** `FUN_022be9e8`
-```c
-*(undefined2 *)(iVar10 + 0x132) = *(undefined2 *)(iVar10 + 0x24);
-*(undefined2 *)(iVar10 + 0x134) = *(undefined2 *)(iVar10 + 0x26);
-```
+`0x132/0x134` were previously named `stored_velocity`. They are a snapshot of the launch offset; no reader has been found.
 
 ## Embedded Structures
 
@@ -343,12 +353,11 @@ void FUN_022bdfc0(int param_1, ...)
 
 ## Open Questions
 
-- Purpose of effect_context + 0x136 (position override flag) and + 0x138 (override position source)
-- Complete layout between offsets 0x2C-0x3C
+- Layout of the spawn tail (0x30-0x3B) and what `FUN_0201d110` does with it
 - Complete layout between offsets 0xAC-0xE4
 - Screen effect control structure details (offset 0xE8)
 - Purpose of flags bits 1-31 (only bit 0 is known)
-- Where `effect_context + 0x2C` (z_priority) is actually read. Written by `FUN_022bfb6c`. Confirmed via full disassembly that the meta-frame renderer chain (`FUN_0201c5c4` → `FUN_0201b6d4` → `FUN_0200b6f0`) never reads it — `FUN_0201b6d4` derives the OAM bucket purely from `base_Y + piece_Y`. The actual consumer (culling, tick order, or scene-level sort) is still unlocated.
+- Whether anything reads 0x132/0x134
 
 ## Functions Used
 
@@ -361,3 +370,6 @@ void FUN_022bdfc0(int param_1, ...)
 | `FUN_022bf764` | `0x022bf764` | Effect pool tick (iterates 32 slots) |
 | `FUN_022bf4f0` | `0x022bf4f0` | Per-effect tick function |
 | `AnimationHasMoreFrames` | - | Check if effect still active (for wait loops) |
+| `FUN_022be780` | `0x022be780` | Effect dispatcher (writes dispatch type to 0x04) |
+| `FUN_022be730` | `0x022be730` | Allocate + init wrapper |
+| `FUN_022beb2c` | `0x022beb2c` | Projectile per-frame position + offset decay |
