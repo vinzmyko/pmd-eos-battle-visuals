@@ -2,98 +2,84 @@
 
 ## Summary
 
-- Projectile speed has 3 levels: slow (12 frames), medium (8 frames), fast (4 frames)
-- Direction uses 8-direction lookup table (DIRECTIONS_XY)
-- Three wave patterns: straight (0), vertical sine (1), spiral (2)
-- **In practice, all projectile moves get wave pattern 0** — patterns 1/2 only apply to Dive/Dig on matching terrain, which are not projectile moves
-- Two nested loops: outer iterates per tile of range, inner iterates frame_count times per tile
-- Position updated per frame in 8.8 fixed point
-- Reverse direction adds 4 to direction index (180° rotation)
-- Source position is attacker's pixel position; destination is target tile center
-- Attachment points are looked up but NOT applied to projectile trajectory
-- Gravity arc from FUN_022beb2c applies to ALL projectiles unconditionally
+- `FUN_023230fc` runs one flight per strike, only when `GetMoveRangeDistance` (R) is nonzero
+- The endpoint is found first: walk from the attacker's tile along its facing for up to R tiles, stopping on the first wall or monster tile (inclusive). T = tiles walked
+- Speed is 2/3/6 px per frame; each tile takes `fc = 24 / speed` frames (12/8/4). Flight = `T × fc` frames
+- The ground track runs from the attacker's tile centre (+12, +16) along the facing direction
+- Wave patterns: 0 none, 1 screen-vertical bump, 2 sideways bulge to the right of travel. Both are a half sine over the whole flight
+- The attacker's attachment offset (the move's `attachment_point_idx`) seeds `ctx + 0x24/0x26` and decays toward (0, −9) each frame with divisor `n = 6T`. This is the "gravity arc"
+- Draw order = ground Y / 2 + `{1,1,1,0,0,0,1,1}[dir]`
+- `GetBodySize ≥ 4` with R == 1 spawns no effect; the frames still run
+- Wall/monster checks and the hit roll happen per tile inside the flight; hits resolve after it
 
-## Spawn Position System
+## Endpoint and Spawn
 
-### Source Position (Projectile Start)
+### Endpoint Pre-Walk (`FUN_023230fc` @ 0x02323198)
 
-Projectile starts at **attacker's current pixel position**, converted from 8.8 fixed point to screen pixels.
-
-| Component | Formula | Description |
-|-----------|---------|-------------|
-| X | `attacker->pixel_pos.x >> 8` | Screen X pixel |
-| Y | `attacker->pixel_pos.y >> 8` | Screen Y pixel |
-
-**Evidence:** `FUN_02322f78`
 ```c
-local_28 = (undefined2)((uint)param_1[3] >> 8);  // attacker->pixel_pos.x >> 8
-local_26 = (undefined2)((uint)param_1[4] >> 8);  // attacker->pixel_pos.y >> 8
-```
-
-These values are passed to `FUN_022be9e8` and stored in the effect context:
-```c
-*(ushort *)(iVar10 + 0x128) = param_1[2];  // source_x
-*(ushort *)(iVar10 + 0x12a) = param_1[3];  // source_y
-```
-
-### Destination Position (Projectile End)
-
-Projectile ends at **target tile center**, using standard entity positioning offsets.
-
-| Component | Formula | Offset | Description |
-|-----------|---------|--------|-------------|
-| X | `(tile_x * 24 + 12) * 256 >> 8` | +12 | Tile center X |
-| Y | `(tile_y * 24 + 16) * 256 >> 8` | +16 | Below center Y (feet) |
-
-**Evidence:** `FUN_02322f78`
-```c
-// param_2 is target tile position
-local_30 = (undefined2)((uint)((*param_2 * 0x18 + 0xc) * 0x100) >> 8);   // tile_x * 24 + 12
-local_2e = (undefined2)((uint)((param_2[1] * 0x18 + 0x10) * 0x100) >> 8); // tile_y * 24 + 16
-```
-
-These become dest_x/dest_y in the effect context:
-```c
-*(undefined2 *)(iVar10 + 300) = *param_2;    // dest_x (offset 0x12C)
-*(undefined2 *)(iVar10 + 0x12e) = param_2[1]; // dest_y
-```
-
-**Critical detail: destination is always 1 tile ahead.** In `FUN_023230fc`, before calling `FUN_02322f78`, the destination tile (`local_2c`) is set to attacker position + 1 tile in facing direction:
-```c
-local_2c.x = local_2c.x + sVar3;  // sVar3 = direction delta X (-1, 0, or 1)
-local_2c.y = local_2c.y + sVar4;  // sVar4 = direction delta Y (-1, 0, or 1)
-```
-This means the effect context always stores source/dest that are exactly 1 tile (24px) apart, regardless of actual attacker-to-target distance.
-
-### Attachment Point Handling
-
-Attachment points are looked up but **NOT added to projectile source position**.
-
-**Evidence:** `FUN_02322f78`
-```c
-// Get attachment point index from move animation (with per-Pokemon override)
-uVar2 = FUN_022bf01c((int)*(short *)(iVar5 + 4), (uint)uVar1);
-
-if (uVar2 == 0xffffffff) {
-    // No attachment point - use default offset (likely 0,0)
-    sStack_24 = *DAT_023230f8;
-    sStack_22 = DAT_023230f8[1];
-}
-else {
-    // Calculate offset from WAN sprite data
-    FUN_0201cf90(&sStack_24, (ushort *)(param_1 + 0xb), uVar2 & 0xff);
+tile = attacker->pos; T = 0; hit = NULL;
+for (i = 0; i < R; i++) {
+    if (tile.x < 0 || tile.y < 0 || tile.x >= 56 || tile.y >= 32) break;
+    tile += DIRECTIONS_XY[dir];
+    T++;                                         // local_64
+    t = GetTile(tile);
+    if ((t->terrain & 3) == 0) break;            // wall
+    if (t->monster && t->monster->type == ENTITY_MONSTER) { hit = t->monster; break; }
 }
 ```
 
-**Key Finding:** The attachment point offset is calculated but the source position is still taken directly from attacker pixel position:
-
-```c
-// Source position - no attachment offset added
-local_28 = (undefined2)((uint)param_1[3] >> 8);  // Direct from pixel_pos
-local_26 = (undefined2)((uint)param_1[4] >> 8);  // Direct from pixel_pos
+**Evidence:** hand-decoded. Ghidra marks `GetTile` as no-return and leaves these as raw bytes.
+```
+023231e8  ldrh  r1,[r0,#0x0]    ; tile terrain flags
+023231ec  tst   r1,#0x3
+023231f0  beq   0x0232321c      ; wall → stop
+023231f4  ldr   r1,[r0,#0xc]    ; tile->monster
+023231f8  cmp   r1,#0x0
+023231fc  beq   0x02323210      ; empty → next tile
+02323200  ldr   r0,[r1,#0x0]    ; entity->type
+02323204  cmp   r0,#0x1         ; ENTITY_MONSTER
+02323208  moveq r5,r1           ; remember hit monster
+0232320c  beq   0x0232321c      ; monster → stop
+02323210  add   r4,r4,#0x1
 ```
 
-**Conclusion:** Attachment points may affect rendering/visual offset but do NOT modify the actual projectile trajectory source point.
+`tile` becomes the destination passed to `FUN_02322f78`. `T` drives amplitude and phase.
+
+### Spawn (`FUN_02322f78`)
+
+No effect is spawned (returns −1) when:
+- `dungeon + 0x1A23E` is set
+- `GetBodySize(species) ≥ 4` and R == 1
+- the move's layer 3 effect id is 0
+
+```c
+idx = FUN_022bf01c(species, anim_id);               // move.attachment_point_idx, species % 600 override
+if (idx == -1) launch = *(s16x2 *)0x02352A54;       // (0, 0)
+else           FUN_0201cf90(&launch, &attacker->anim_ctrl, idx);
+dest = (tile.x * 24 + 12, tile.y * 24 + 16);
+FUN_022be9e8(&{anim_id, species, px >> 8, py >> 8, launch.x, launch.y, dir, 0}, &dest, 0, dir);
+```
+
+The attachment index is the **move's** `attachment_point_idx` (0x11), not the effect's `field_0x19`. `FUN_022be9e8` stores the same index (via the identical `FUN_022bf088`) at `ctx + 0x28`.
+
+**Spawn param mapping** (stack in `FUN_02322f78` → `param_1` in `FUN_022be9e8` → context):
+
+| Stack | `param_1[i]` | Context |
+|-------|--------------|---------|
+| sp+4 | [0] anim move id | — |
+| sp+6 | [1] species | 0x130 |
+| sp+8/A | [2],[3] attacker pixel >> 8 | 0x20/0x22, 0x128/0x12A |
+| sp+C/E | [4],[5] launch offset | **0x24/0x26**, 0x132/0x134 |
+| sp+10 | [6..7] direction | 0x1C |
+| sp+14 | [8..9] 0 | 0x18 (delay) |
+
+**Evidence:** `FUN_02322f78` asm
+```
+02323074  add  r0,sp,#0xc        ; FUN_0201cf90 writes launch offset to sp+0xC
+023230a4  add  r0,sp,#0x4        ; param_1 = sp+4
+023230a8  add  r1,sp,#0x0        ; param_2 = sp+0 (dest)
+023230d8  bl   FUN_022be9e8
+```
 
 ## Speed System
 
@@ -192,10 +178,14 @@ sVar4 = *(short *)(DAT_023238fc + uVar18 * 4);  // Y delta
 
 | Symbol | Address (NA) | Contents |
 |--------|--------------|----------|
-| DAT_023238f8 | 0x023238f8 | Pointer to X deltas |
-| DAT_023238fc | 0x023238fc | Pointer to Y deltas |
-| DAT_02323900 | 0x02323900 | Additional direction data |
-| DAT_02323908 | 0x02323908 | Z priority data |
+| DAT_023238f4 | 0x02352A54 | Default launch offset (0, 0), then two −1 handle inits |
+| DAT_023238f8 | 0x0235171C | DIRECTIONS_XY x (stride 4) |
+| DAT_023238fc | 0x0235171E | DIRECTIONS_XY y |
+| DAT_02323900 | 0x0235175C | DIRECTION_ANGLE_4096, int32[8] |
+| DAT_02323904 | — | Angle mask 0xFFF |
+| DAT_02323908 | 0x02352A6C | PROJECTILE_DRAW_ORDER_BIAS, int32[8] |
+| DAT_0232390c | 0x02353538 | DUNGEON_PTR |
+| DAT_02323910 | — | 0x1A226, camera Y in dungeon struct |
 | DIRECTIONS_XY | 0x0235171C | Direction vector table |
 
 ### Reverse Direction
@@ -212,348 +202,89 @@ iVar11 = (int)*(short *)(DAT_02323c30 + iVar4);  // Reversed X delta
 sVar1 = *(short *)(DAT_02323c34 + iVar4);        // Reversed Y delta
 ```
 
-## Wave Patterns
+## Flight Loop (`FUN_023230fc`)
 
-### Pattern Types
-
-| Pattern | param_4 Value | Description |
-|---------|---------------|-------------|
-| Straight | 0 | No wave, direct line |
-| Vertical Sine | 1 | Up-down oscillation perpendicular to travel |
-| Spiral | 2 | Circular/helical motion |
-
-### Wave Pattern Determination
-
-Wave pattern is stored in **move_animation_info flags bits 0-2** (mask 0x07), extracted by `FUN_022bfd58` from the move animation data. The value flows through `FUN_02322ddc` → `FUN_02324e78` → `FUN_023230fc` as param_4.
-
-**Earlier analysis incorrectly claimed FUN_02325d20 forces this to 0 for all projectile moves.** That was a misreading of the comma expression in `FUN_02324e78`. The actual asm at `0x02324f00`:
-
-```arm
-cmp r8, #0x0       ; param_3 (first-strike flag)
-moveq r0, r10      ; if param_3 == 0, return raw flags
-beq LAB_023250c8
-```
-
-And earlier:
-```arm
-cmp r0, #0x0       ; FUN_02325d20 result
-movne r0, r10      ; if Dive/Dig terrain match, return raw flags
-bne LAB_023250c8
-```
-
-So `FUN_02324e78` returns the raw `flags & 7` value in three cases:
-1. Entity not visible (`ShouldDisplayEntityAdvanced` false)
-2. Dive/Dig on matching terrain (`FUN_02325d20` returns nonzero)
-3. Subsequent strike of multi-strike move (`param_3 == 0`)
-
-The override path that COULD return 0 only triggers when `FUN_02325d20` returns 0 (NOT Dive/Dig) AND param_3 != 0 AND `sVar1 != 0` (move has charge effect). But within that path, `bVar7 = bVar4` is reassigned to raw flags via the comma expression `(bVar7 = bVar4, param_3 != 0)`, so the final return is still raw.
-
-**Conclusion: projectile moves receive their raw wave_pattern from move_animation_info, not 0.** This was confirmed by ROM observation — Egg Bomb (single-strike) and Bonemerang (multi-strike) both visibly arc with sine wave patterns.
-
-**FUN_02325d20** is still relevant for Dive/Dig — those moves use their flags-based wave pattern when on matching terrain, and use 0 when on non-matching terrain. But this only affects two specific moves, not the projectile system in general.
-
-**Reverse direction projectiles** (`FUN_0232393c`) always use wave pattern 0 regardless of flags.
-
-### Amplitude Calculation
-
-Amplitude depends on the **move's range category** (`param_3` = `GetMoveRangeDistance` result):
-
-**For range < 2 (short range):**
-```c
-amplitude = 0x20;  // 32
-```
-
-**For range >= 2 (long range):**
-```c
-amplitude = min(tile_distance * frame_count + 8, 64);
-```
-Where `tile_distance` is the number of tiles walked in the bounds-check loop (tracked in `local_64`), and `frame_count` is `24 / mapped_speed`.
-
-**Evidence:** `FUN_023230fc` assembly (0x02323344-0x0232335c)
-```arm
-cmp r6, #0x2              ; param_3 < 2?
-blt LAB_0232335c           ; yes → amplitude = 0x20
-add r4, r1, #0x8           ; r4 = (tile_dist * frame_count) + 8
-cmp r4, #0x40
-movge r4, #0x40            ; clamp to 64
-b LAB_02323360
-LAB_0232335c:
-mov r4, #0x20              ; 32 for short range
-```
-
-**Note:** The Ghidra decompiler incorrectly showed this as a flat value of 8 for range >= 2. The assembly reveals the actual formula includes the `tile_distance * frame_count` term.
-
-**`param_3` is the return value of `GetMoveRangeDistance`**, which is a fixed property of the move derived from the `target_range` field in `waza_p.bin`. It is NOT the runtime tile distance between attacker and target. Values are always 0, 1, 2, or 10 — see `move_target_and_range.md` for the full mapping.
-
-### Phase Progression
-
-Phase advances based on total travel frames. The divisor is `range * frame_count`, not just `frame_count`:
-```c
-total_frames = range * frame_count;  // outer loop count × inner loop count
-phase_step = 0x80000 / total_frames; // Half sine wave over entire travel
-```
-
-**Evidence:** `FUN_023230fc` assembly (0x02323334-0x0232336c)
-```arm
-; After _s32_div_f(0x18, iVar7) returns frame_count in r0:
-ldr r2, [sp, #local_64]      ; tile distance walked
-str r0, [sp, #local_d0]      ; store frame_count
-mul r1, r2, r0                ; r1 = tile_distance * frame_count
-; ... then later:
-mov r0, #0x80000
-bl _s32_div_f                 ; 0x80000 / (tile_distance * frame_count)
-str r0, [sp, #local_68]       ; phase_step
-```
-
-**Note:** The Ghidra decompiler showed the divisor as 0, which is a decompiler artifact. The actual divisor register (`r1`) holds the product computed above.
-
-Per frame:
-```c
-angle = phase >> 8;                 // Convert to 12-bit for trig functions
-phase += phase_step;
-```
-
-### Pattern 0: Straight Line
-
-No wave offset applied:
-```c
-wave_x = 0;
-wave_y = 0;
-```
-
-**Evidence:** `FUN_023230fc`
-```c
-else {
-    iVar13 = 0;
-    local_98 = 0;
-}
-```
-
-### Pattern 1: Vertical Sine Wave
-
-Single sine wave perpendicular to travel:
-```c
-wave_y = amplitude * SinAbs4096(angle);
-wave_x = 0;
-```
-
-**Evidence:** `FUN_023230fc`
-```c
-if (param_4 == 1) {
-    local_98 = SinAbs4096(iVar14);
-    local_98 = iVar17 * local_98;
-    iVar13 = 0;
-}
-```
-
-### Pattern 2: Spiral/Circular Motion
-
-Uses two angles for circular motion:
-```c
-// Primary angle from phase
-radius = (amplitude / 2) * SinAbs4096(angle) >> 8;
-
-// Secondary angle based on direction
-secondary_angle = (direction_angle + 0xC00) & 0x1FFF;
-
-wave_y = radius * SinAbs4096(secondary_angle);
-wave_x = radius * CosAbs4096(secondary_angle);
-```
-
-**Evidence:** `FUN_023230fc`
-```c
-else if (param_4 == 2) {
-    iVar13 = SinAbs4096(iVar14);
-    iVar13 = (iVar17 >> 1) * iVar13 >> 8;
-    local_98 = SinAbs4096(x);
-    local_98 = iVar13 * local_98;
-    iVar9 = CosAbs4096(x);
-    iVar13 = iVar13 * iVar9;
-}
-```
-
-### Secondary Angle Setup
-```c
-uVar15 = direction_angle + 0xC00;   // Add 3/4 turn (270°)
-x = uVar15 & DAT_02323904;          // Mask to valid range (0x1FFF)
-```
-
-## Two-Loop Structure
-
-### Overview
-
-`FUN_023230fc` has **two nested loops**, not one:
-
-- **Outer loop** (counter at `local_d4`, compared against `param_3`/`r6` at address `0x02323824`): iterates once per tile of range
-- **Inner loop** (counter at `local_70`, compared against `frame_count` at address `0x0232372c`): iterates `frame_count` times per tile
-
-Total frames = `param_3 × frame_count`.
-
-**Evidence:** Assembly loop structure
-```arm
-; Inner loop comparison (0x0232372c):
-ldr r1, [sp, #local_70]       ; inner counter
-ldr r0, [sp, #local_d0]       ; frame_count
-cmp r1, r0
-blt LAB_02323538               ; continue inner loop
-
-; Outer loop comparison (0x02323824):
-ldr r0, [sp, #local_d4]       ; outer counter
-cmp r0, r6                     ; param_3 (range)
-blt LAB_023233fc               ; continue outer loop
-```
-
-Each outer iteration:
-1. Advances the tile position by one tile in the facing direction
-2. Calls `FUN_022e2ca0` to validate the new tile
-3. Runs the inner frame loop for projectile motion within that tile
-
-**Note:** For range 0/1 moves (most single-target projectile moves), the outer loop runs once, so behavior is equivalent to a single loop. The two-loop structure matters for range 2+ moves.
-
-## Position Update Loop
-
-### Per-Frame Update (Inner Loop)
-```c
-// Starting position (8.8 fixed point)
-pos_x = (tile_x * 24 + 12) * 256;
-pos_y = (tile_y * 24 + 16) * 256;
-
-for (frame = 0; frame < frame_count; frame++) {
-    // Calculate wave offset
-    angle = phase >> 8;
-    // ... wave pattern calculation ...
-    
-    // Apply wave for rendering
-    render_x = (pos_x + wave_x) >> 8;
-    render_y = (pos_y - wave_y) >> 8;  // Y is SUBTRACTED
-    
-    // Update effect position
-    FUN_022beb2c(effect_handle, &render_pos, z_priority);
-    
-    // Advance frame
-    AdvanceFrame('0');
-    
-    // Move projectile
-    pos_x += delta_x * velocity;
-    pos_y += delta_y * velocity;
-    
-    // Advance phase
-    phase += phase_step;
-}
-```
-
-**Evidence:** `FUN_023230fc`
-```c
-for (local_70 = 0; local_70 < (int)uVar20; local_70 = local_70 + 1) {
-    // ... wave calculations ...
-    
-    local_4c = (undefined2)((uint)(local_8c + iVar13) >> 8);
-    local_4a = (undefined2)((uint)(iVar8 - local_98) >> 8);
-    FUN_022beb2c((int)sVar1, &local_4c, z_priority);
-    
-    AdvanceFrame('0');
-    
-    local_8c = local_8c + sVar3 * iVar7;
-    iVar8 = iVar8 + sVar4 * iVar7;
-    
-    iVar19 = iVar19 + (int)uVar21;
-}
-```
-
-### Z Priority Calculation
-
-Z priority based on Y position relative to camera:
-```c
-z_priority = base_z + (render_y - camera_y) / 2;
-```
-
-**Evidence:** `FUN_023230fc`
-```c
-FUN_022beb2c((int)sVar1, &local_4c,
-             iVar16 + ((iVar8 >> 8) - (int)*(short *)(*DAT_0232390c + DAT_02323910)) / 2);
-```
-
-## Projectile Arc Effect (FUN_022beb2c)
-
-The per-frame position update function also creates a subtle arc by modifying the offset fields (+0x24/+0x26) each frame.
-
-**Calculation each frame:**
-1. Compute Chebyshev distance: `n = max(|dest_x - src_x|, |dest_y - src_y|) / 4`
-   **In practice, dest is always 1 tile ahead of source** (set in `FUN_023230fc` using attacker position + 1 tile in facing direction before calling `FUN_02322f78`), so `n` is always `24 / 4 = 6`. The gravity arc height is therefore **constant regardless of actual attacker-to-target distance**. Confirmed via Ghidra analysis of `FUN_023230fc`.
-2. Add +9 to Y offset (gravity bias)
-3. Scale both offsets by `(n-1)/n` — decays toward zero as projectile travels
-4. Subtract 9 from Y offset — net effect is `-9/n` added per frame
-
-The net Y adjustment creates an upward arc that converges to -9 pixels. Because `n=6` is constant, the arc shape and height are identical whether the target is 1 tile or 10 tiles away.
-
-**Integer arithmetic note:** All operations use `short` (int16) types. Integer truncation during the `* (n-1) / n` step causes the arc to converge to its peak significantly faster than equivalent float arithmetic would. This is important for accurate recreation — using float division produces a noticeably weaker arc.
-
-**The arc runs unconditionally** — `FUN_022beb2c` is called every frame inside the inner loop for ALL wave patterns (0, 1, and 2). There is no branch on `param_4` (wave pattern) gating this call. Confirmed via assembly at `0x023235fc`: the `BL FUN_022beb2c` instruction is inside `if (-1 < effect_handle)` but has no condition on wave pattern.
-
-### How Arc Offsets Reach the Renderer
-
-The gravity arc writes to effect_context offsets +0x24/+0x26. These offsets are consumed by `FUN_022bf4f0` (the per-effect tick function):
+### Setup
 
 ```c
-// FUN_022bf4f0 — reading +0x24/+0x26 for rendering:
-if (*(char *)(param_1 + 10) != -1) {   // offset 0x28 = attachment_point
-    local_18 = param_1[9];              // offset 0x24/0x26 (gravity arc offsets)
+fc         = 24 / speed;
+amp        = (R < 2) ? 32 : min(T * fc + 8, 64);
+phase_step = 0x80000 / (T * fc);          // phase >> 8 spans 0..0x800 = half a turn
+z_bias     = PROJECTILE_DRAW_ORDER_BIAS[dir];
+side_angle = (DIRECTION_ANGLE_4096[dir] + 0xC00) & 0xFFF;
+```
+
+**Evidence:** asm 0x02323334-0x023233f4. `0x02323340 mul r1,r2,r0` (T × fc, the divisor); amplitude at 0x02323344; phase at 0x02323360; side angle at 0x023233bc/0x023233cc; z bias at 0x023233e4.
+
+### Per Tile (outer loop, up to R iterations)
+
+```c
+prev = tile;  tile += DIRECTIONS_XY[dir];
+if (FUN_022e2ca0(tile) && !dungeon[0x1A23E]) {
+    ground_x = (prev.x * 24 + 12) << 8;
+    ground_y = (prev.y * 24 + 16) << 8;
+    for (f = 0; f < fc; f++) { /* per frame */ }
 } else {
-    local_18 = *(int *)(DAT_022bf758 + 0xc);  // default value (ignores arc)
+    phase += phase_step * fc;            // frames skipped, phase kept in step
 }
+t = GetTile(tile);
+if (wall) break;
+if (monster) { /* hit checks, add to target list */ break; }
 ```
 
-**If `attachment_point == -1` (0xFF):** The gravity offsets are ignored by the renderer — a default value is used instead. The arc is computed but invisible.
+`FUN_022e2ca0` is a visibility check (within ±6 x / ±5 y of the camera tile at `dungeon + 0x1A21C`, and in sight), not collision.
 
-**If `attachment_point != -1` (0-3):** The gravity offsets are read and added to the render position, making the arc visible.
+The post-tile block (0x02323758-0x02323814, hand-decoded) tests wall then monster, makes four checks (calls at 0x02323788 with 0x2E, 0x0232379C with 0x60, 0x023237B0, 0x023237C4; unidentified), builds the target list at `sp + 0xA8`, stores the count in `local_60` and leaves the loop.
 
-**All projectile effects have `attachment_point` in the range 0-3** (verified: Bonemerang effect 133 has `attachment_point=1`, Water Gun effect 333 has `attachment_point=0`). Therefore, the gravity arc is always visually applied to projectiles.
+### Per Frame
 
-**For entity-bound effects:** `FUN_022bfb6c` overwrites +0x24/+0x26 every frame with the tracked entity's attachment point offsets. This prevents gravity from accumulating on non-projectile effects, since projectiles are NOT registered with the entity binding system (`FUN_022e6d68`).
-
-### Arc Convergence Values
-
-| Frame | arc_offset_y (n=6, constant=9) |
-|-------|-------------------------------|
-| 0 | 0 |
-| 1 | -2 |
-| 2 | -4 |
-| 3 | -5 |
-| 4 | -6 |
-| 5 | -7 |
-| 6 | -7 |
-| 7 | -8 |
-| 8+ | converges to -9 |
-
-On the DS (192px screen), -9px is ~4.7% of screen height. For fast projectiles (4 frames), the arc only reaches about -6px — barely perceptible, making Water Gun appear "straight" despite having the arc applied.
-
-**Note:** The offset fields at effect_context +0x24/+0x26 serve **dual purpose**: for entity-attached effects they hold attachment point offsets (written by `FUN_022bfb6c`), but for projectiles they hold decaying arc offsets (written by `FUN_022beb2c`).
-
-**Evidence:** `FUN_022beb2c`
 ```c
-void FUN_022beb2c(int param_1, undefined2 *param_2, undefined4 param_3)
-{
-    // ... context lookup ...
-    *(short *)(iVar4 + 0x20) = *param_2;      // Set X position
-    *(short *)(iVar4 + 0x22) = param_2[1];    // Set Y position
-    
-    // Chebyshev distance between stored dest and source (always 1 tile = 24px apart)
-    iVar3 = abs(*(short *)(iVar4 + 0x12e) - *(short *)(iVar4 + 0x12a));  // |dest_y - src_y|
-    iVar2 = abs(*(short *)(iVar4 + 0x12c) - *(short *)(iVar4 + 0x128));  // |dest_x - src_x|
-    if (iVar2 <= iVar3) iVar2 = iVar3;  // max of the two
-    
-    iVar2 = iVar2 / 4;                        // n = max_dist / 4 (always 6 in practice)
-    sVar1 = (short)iVar2 - 1;                 // n - 1
-    
-    *(short *)(iVar4 + 0x26) += 9;            // Gravity bias
-    *(short *)(iVar4 + 0x24) *= sVar1;        // Scale X offset by (n-1)
-    *(short *)(iVar4 + 0x26) *= sVar1;        // Scale Y offset by (n-1)
-    *(short *)(iVar4 + 0x24) /= iVar2;        // Divide by n
-    *(short *)(iVar4 + 0x26) /= iVar2;        // Divide by n
-    *(short *)(iVar4 + 0x26) -= 9;            // Remove bias, leaving net arc
-    *(int *)(iVar4 + 0x2c) = param_3;         // Z priority
-}
+if (wave == 1)      { wx = 0;  wy = amp * Sin(phase >> 8); }
+else if (wave == 2) { r  = ((amp >> 1) * Sin(phase >> 8)) >> 8;
+                      wx = r * Cos(side_angle);  wy = r * Sin(side_angle); }
+else                { wx = wy = 0; }
+
+base = ((ground_x + wx) >> 8, (ground_y - wy) >> 8);
+z    = z_bias + ((ground_y >> 8) - cam_y) / 2;   // cam_y = *(s16 *)(dungeon + 0x1A226)
+FUN_022beb2c(handle, &base, z);                  // sets 0x20/0x22, decays 0x24/0x26, sets 0x2C
+AdvanceFrame('0');                               // tick draws here
+ground_x += dx * speed * 256;
+ground_y += dy * speed * 256;
+phase    += phase_step;
 ```
+
+- Y wave is subtracted: positive = up on screen
+- Pattern 1 ignores direction (screen-vertical only)
+- Pattern 2 is **not a spiral**. The angle is fixed for the whole flight; only the radius changes. It is a sideways bulge of `amp / 2` to the right of travel; in y-down screen coordinates the offset direction is `(−dy, dx)` of the travel vector
+- `z` uses the ground track only (no wave, no launch offset)
+- The last drawn ground position is one step short of the end tile centre
+
+### Wave Pattern Source
+
+`flags & 7` (`FUN_022bfd58`) → `FUN_02324e78` → returned by `FUN_02322ddc` → passed by `FUN_02322374` as `param_4`. `FUN_02322ddc` returns 0 when neither the attacker nor any target is displayed.
+
+### Launch Offset Decay (`FUN_022beb2c`)
+
+```c
+n  = max(|dest_x - src_x|, |dest_y - src_y|) / 4;   // = 6T for a standing attacker
+oy = (s16)(oy + 9);
+ox = (s16)(ox * (n - 1));
+oy = (s16)(oy * (n - 1));
+ox = ox / n;                                        // truncate toward zero
+oy = oy / n;
+oy -= 9;
+```
+
+**Evidence:** asm 0x022beb9c-0x022bebf8. Every intermediate is written back with `strh`; the division is `_s32_div_f` (truncating).
+
+- Runs before `AdvanceFrame`, so the undecayed launch offset is never drawn
+- Converges to (0, −9)
+- Fraction of `(o + 9)` left on arrival ≈ `(1 − 1/6T)^(T·fc)`: about 0.5 / 0.25 / 0.13 at speed 6 / 3 / 2, nearly independent of T
+- Example, T = 1, speed 6, launch offset (−10, −40): drawn offsets (−8, −34), (−6, −29), (−5, −25), (−4, −22)
+- Launch offset (0, 0), n = 6: y = −2, −4, −5, −6, −7, −8, −9 (x stays 0)
+- n = 0: `_s32_div_f(x, 0)` returns x, so `ox = −ox` and `oy = −oy − 18` every frame (flips). See "Return Projectiles"
+
+The offset is only visible when `ctx + 0x28 != −1`; with `attachment_point_idx == −1` the projectile follows ground track + wave exactly. See `effect_context.md` → "Render Tick".
 
 ## Effect Cleanup
 
@@ -571,78 +302,72 @@ if (-1 < local_38) {
 }
 ```
 
-## Dual Projectile Support
+## Return Projectiles
 
-`FUN_023230fc` can handle two simultaneous projectiles (e.g., attacker and target effects):
+### Second Projectile (`param_7`)
 
-- `local_38` / `sVar1`: Primary effect handle
-- `local_34` / `iVar11` / `sVar2`: Secondary effect handle
+`param_7` = move flag bit 3 (`FUN_022bfd6c`). If the pre-walk hit a monster, a second effect is spawned from it (`FUN_02322f78(hit, &hit->pos, ...)`) and moves along `dir + 4`, sharing the phase. Pattern 1 amplitude is negated (`local_b4 = −amp`); pattern 2 uses `+0x1400` (= +0x400, the other side).
 
-Both are updated and cleaned up independently.
+### `FUN_0232393c`
+
+Travels `param_4` tiles from `param_2`'s tile along the user's `dir + 4`. No pre-walk and no hit check; amplitude and phase use `param_4`; only pattern 1 (`param_5`). Ends with `AnimationDelayOrSomething`, then `PlayMoveAnimation` at the end tile, and clears `info + 0x170` if the move is `DAT_02323c44`. Caller unidentified.
+
+### n = 0
+
+Both pass the projectile's own tile as `dest`, so source equals destination and the decay flips the offset each frame. Visible only when the attachment index is not −1. Probable ROM bug.
+
+## Post-Flight
+
+```c
+FUN_022bde50(handle);  FUN_022bde50(second);
+FUN_0234b4cc(0);
+if (move == 0x1E5) AnimationDelayOrSomething(1);
+if (target_count > 0)                       ExecuteMoveEffect(&targets, attacker, move, ...);
+else if (R == 1 && FUN_022e2ca0(end_tile)) { FUN_022ea370(1, 0x4A); PlayMoveAnimation(attacker, NULL, move, &end_tile); }
+```
+
+With R == 1 and no target, the primary still plays on the empty end tile.
 
 ## Trigonometry
 
-### Angle Format
+- 4096 units per turn, maths convention: 0 = right, 0x400 = up, 0xC00 = down
+- `SinAbs4096`: quarter-wave table at `DAT_02001978` (index `x & 0x3FF`, mirrored for 0x400-0x7FF, negated for 0x800-0xFFF)
+- Output scale (`table[0x3FF]`) unconfirmed. Clients assuming 0x100 = 1.0 get `amp` in pixels, which matches observed arcs
 
-- 12-bit angles: 4096 units = 360°
-- 0x000 = 0°, 0x400 = 90°, 0x800 = 180°, 0xC00 = 270°
+**DIRECTION_ANGLE_4096** (`0x0235175C`):
 
-### Functions
+| dir | 0 D | 1 DR | 2 R | 3 UR | 4 U | 5 UL | 6 L | 7 DL |
+|-----|-----|------|-----|------|-----|------|-----|------|
+| angle | 0xC00 | 0xE00 | 0x000 | 0x200 | 0x400 | 0x600 | 0x800 | 0xA00 |
 
-- `SinAbs4096(angle)`: Sine lookup, returns signed value
-- `CosAbs4096(angle)`: Cosine lookup, returns signed value
+**PROJECTILE_DRAW_ORDER_BIAS** (`0x02352A6C`): `{1, 1, 1, 0, 0, 0, 1, 1}`. It ties with the entity row when travelling toward the top of the screen and sits one bucket in front otherwise. This is neither the unbound ±3 nor the bound ±1 table.
 
-Both use a quarter-wave table and derive other quadrants.
+## Dive/Dig Terrain Check (`FUN_02325d20`)
 
-## FUN_02325d20: Dive/Dig Terrain Check
-
-This function is **not related to projectile wave patterns**. It checks terrain validity for Dive and Dig, two-turn melee moves that go underground/underwater.
-
-```c
-undefined4 FUN_02325d20(int param_1, int param_2)
-{
-    if (*(short *)(param_2 + 4) == 0x9c) {  // Move 156 = Dive
-        ptVar2 = GetTileAtEntity((entity *)param_1);
-        bVar1 = IsTileGround((position *)ptVar2);
-        if (bVar1 != '\0') return 1;
-    }
-    if ((*(short *)(param_2 + 4) == 8) &&   // Move 8 = Dig
-        (ptVar2 = GetTileAtEntity((entity *)param_1), (*(ushort *)ptVar2 & 3) != 1)) {
-        return 1;  // Non-water tile
-    }
-    return 0;
-}
-```
-
-**Called in multiple functions:**
-- `FUN_02324e78`: Gates whether `flags & 7` is used as wave pattern (but since Dive/Dig aren't projectile moves, this never affects projectiles)
-- `PlayMoveAnimation`: Gates primary effect (layer 2) playback
-- `FUN_023250d4`: Gates charge/attack animation sequence
-- `FUN_023258ec`: Gates dual-target effect playback
-
-**Impact on wave patterns:** In `FUN_02324e78`, when `FUN_02325d20` returns 0 (all moves except Dive/Dig on matching terrain), the wave pattern is forced to 0 regardless of `flags & 7`. Since neither Dive nor Dig are projectile moves, **all projectile moves always receive wave pattern 0**.
+Unrelated to projectile waves. Returns 1 for Dive on a ground tile or Dig on a non-water tile. Gates the animation paths in `PlayMoveAnimation`, `FUN_023250d4`, `FUN_023258ec` and `FUN_02324e78`.
 
 ## Implementation Summary
 
-For accurate projectile recreation:
+| Parameter | ROM |
+|-----------|-----|
+| Flight runs | `R = GetMoveRangeDistance(user, move, 1) > 0` |
+| Effect spawned | layer 3 ≠ 0 and not (`BodySize ≥ 4` and R == 1) |
+| Tiles flown T | pre-walk to first wall/monster, ≤ R |
+| Ground start | attacker tile × 24 + (12, 16) |
+| Ground step | `DIRECTIONS_XY[dir] × speed` px/frame |
+| Speed / fc | raw 1 → 2 / 12, raw 2 → 3 / 8, else 6 / 4 |
+| Total frames | T × fc |
+| Amplitude | R < 2 ? 32 : min(T·fc + 8, 64) |
+| Phase | 0 → 0x800 over T·fc frames |
+| Pattern 1 | y −= amp · sin |
+| Pattern 2 | += r · (cos θ, −sin θ); r = (amp/2) · sin; θ = angle[dir] + 0xC00 |
+| Launch offset | attacker attachment[move.attachment_point_idx, species override] at launch |
+| Decay | n = 6T; applied before every draw |
+| Offset ignored | attachment index == −1 |
+| Draw order | (ground_y − cam_y)/2 + bias[dir] |
+| 99 component | frame not drawn |
 
-| Parameter | Value |
-|-----------|-------|
-| **Source X** | `attacker.pixel_pos.x >> 8` |
-| **Source Y** | `attacker.pixel_pos.y >> 8` |
-| **Dest X** | `target_tile.x * 24 + 12` |
-| **Dest Y** | `target_tile.y * 24 + 16` |
-| **Direction** | `attacker.monster_info[0x4C]` (0-7) |
-| **Wave Pattern** | From `move_animation_info.flags & 7` (raw, no override for projectile moves) |
-| **Speed** | From `move_animation_info.projectile_speed` mapped via table |
-| **Amplitude** | 32 if `GetMoveRangeDistance < 2`, else `min(range * frame_count + 8, 64)` |
-| **Gravity n** | Always 6 (dest is always 1 tile ahead in effect context) |
-| **Gravity constant** | 9 (integer arithmetic required for accurate convergence) |
-| **Gravity visibility** | Always visible for projectiles (all have attachment_point 0-3) |
-| **Total frames** | `range × frame_count` (two nested loops) |
-| **Phase step** | `0x80000 / (range × frame_count)` |
-
-**Viewport scaling note:** The gravity arc is 9px on DS hardware (192px screen). On larger viewports, the same 9px becomes proportionally smaller. Do NOT scale the gravity constant — use the raw value of 9 to maintain perceptual similarity (fast projectiles appear straight, slow ones show a subtle lob).
+All units are DS screen pixels, 1:1 with sprite pixels.
 
 ## Cross-References
 
@@ -669,40 +394,44 @@ both thrown-item flight handlers identically. See `Items/thrown_item_visuals.md`
 
 ## Resolved Questions
 
-### Wave patterns 1/2 usage
-**Resolved (corrected):** `FUN_02324e78` returns the raw `flags & 7` value for all projectile moves. An earlier reading of the comma expression incorrectly suggested an override to 0; the actual asm shows `bVar7 = bVar4` reassigns to raw before any potential override-application path. Confirmed by ROM observation — projectile moves visibly use their flags-based wave patterns.
+- **"Gravity arc":** the attacker's launch offset decaying toward (0, −9), not a fixed arc from 0
+- **Arc divisor:** n = 6T, not constant 6. The old claim misread the pre-walk as a single step
+- **Destination:** the first wall/monster tile within R, not attacker + 1
+- **Attachment index:** the move's `attachment_point_idx` (0x11). The old "all projectiles have 0-3" checked the effect's `field_0x19`
+- **Decompiler artifacts:** the amplitude/phase divisor is `T × fc` (`local_64 × frame_count`), not `R × fc`
+- **Pattern 2:** a fixed-direction sideways bulge; angle mask is 0xFFF
+- **Draw order:** explicit bias table, not the unbound sentinel
 
-### Whether gravity arc applies to pattern 0
-**Resolved:** `FUN_022beb2c` runs unconditionally for all patterns. The arc is always computed. Visibility depends on `attachment_point` in effect_animation_info: if != -1 (true for all projectile effects), `FUN_022bf4f0` reads and applies the offset. Fast projectiles (4 frames) only reach ~-6px, making the arc imperceptible — this is why Water Gun appears "straight" on DS hardware.
+## Open Questions
 
-### Decompiler artifacts
-**Resolved via assembly verification at 0x02323334-0x0232336c:**
-1. `_s32_div_f(0x80000, 0)` — divisor is actually `r1`, set at `0x02323340` via `mul r1, r2, r0` where `r2 = tile_distance` (local_64) and `r0 = frame_count`. So phase_step = `0x80000 / (tile_distance × frame_count)`, not division by zero.
-2. Amplitude for range >= 2 shown as flat 8 — assembly at `0x02323344-0x02323358` shows `cmp r6, #0x2; blt → mov r4, #0x20` (short path = 32), else `add r4, r1, #0x8; cmp r4, #0x40; movge r4, #0x40` (long path = `min((tile_distance × frame_count) + 8, 64)`). The Ghidra output dropped the MUL term.
-
-These were verified by cross-referencing the register state against the decompiler output, not by trusting the decompiler. Future RE work in this function should prefer the listing view over decomp for any arithmetic.
+- `SinAbs4096` output scale (`DAT_02001978[0x3FF]`)
+- The four hit-check calls in the post-tile block (needs the `GetTile` flow fix)
+- Caller of `FUN_0232393c` and the move at `DAT_02323c44`
+- Whether any flag-bit-3 move has R > 0 (if so, the second projectile jitters)
+- `dungeon + 0x1A23E`: skips spawn and frames; probably "animations off"
 
 ## Functions Used
 
 | Function | Address (NA) | Purpose |
 |----------|--------------|---------|
-| `FUN_023230fc` | `0x023230fc` | Main projectile motion handler |
-| `FUN_0232393c` | `0x0232393c` | Reverse direction projectile handler |
-| `FUN_02322f78` | `0x02322f78` | Spawns projectile effect with position data |
-| `FUN_022be9e8` | `0x022be9e8` | Layer 3 projectile setup |
-| `FUN_022beb2c` | `0x022beb2c` | Update effect position during flight + gravity arc |
-| `FUN_022bde50` | `0x022bde50` | Stop/cleanup effect |
-| `FUN_022bf01c` | `0x022bf01c` | Get attachment point index with override |
-| `FUN_0201cf90` | `0x0201cf90` | Calculate attachment point offset from WAN |
-| `FUN_022bf4f0` | `0x022bf4f0` | Per-effect tick — reads +0x24/+0x26 for rendering |
-| `FUN_022bfb6c` | `0x022bfb6c` | Entity binding position write — overwrites +0x24/+0x26 |
-| `FUN_022e6e80` | `0x022e6e80` | Per-entity binding update — calls FUN_022bfb6c |
-| `FUN_02325d20` | `0x02325d20` | Dive/Dig terrain check (gates wave pattern override) |
-| `FUN_02324e78` | `0x02324e78` | Charge handler — determines final wave pattern |
-| `FUN_022bfd58` | `0x022bfd58` | Read flags & 7 from move_animation_info |
-| `GetMoveAnimationSpeed` | - | Read speed from move animation table |
-| `GetMoveRangeDistance` | - | Returns 0/1/2/10 based on move's target_range field |
-| `SinAbs4096` | - | Sine with 4096-step angles |
-| `CosAbs4096` | - | Cosine with 4096-step angles |
-| `AdvanceFrame` | - | Wait one frame |
-| `FUN_0234b4cc` | `0x0234b4cc` | Enable/disable something (called with 1/0) |
+| `FUN_02322374` | `0x02322374` | Strike loop; calls flight when R > 0 |
+| `FUN_023230fc` | `0x023230fc` | Pre-walk, flight loop, per-tile hit checks |
+| `FUN_0232393c` | `0x0232393c` | Reverse-direction flight |
+| `FUN_02322f78` | `0x02322f78` | Spawn: body-size gate, launch offset, dest |
+| `FUN_022be9e8` | `0x022be9e8` | Layer 3 spawn; writes 0x128-0x134 |
+| `FUN_022beb2c` | `0x022beb2c` | Per-frame base position, offset decay, draw order |
+| `FUN_022bf4f0` | `0x022bf4f0` | Render tick |
+| `FUN_022bf01c` / `FUN_022bf088` | `0x022bf01c` / `0x022bf088` | Move attachment index with species override |
+| `FUN_0201cf90` | `0x0201cf90` | Attachment offset from current WAN frame |
+| `FUN_022e2ca0` | `0x022e2ca0` | Tile visibility |
+| `FUN_022bde50` | `0x022bde50` | Stop effect |
+| `FUN_0234b4cc` | `0x0234b4cc` | Animation/input lock |
+| `FUN_02324e78` | `0x02324e78` | Final wave pattern |
+| `FUN_022bfd58` | `0x022bfd58` | flags & 7 |
+| `FUN_022bfd6c` | `0x022bfd6c` | Flag bit 3 (second projectile) |
+| `FUN_02325d20` | `0x02325d20` | Dive/Dig terrain gate |
+| `GetMoveAnimationSpeed` | — | Raw speed |
+| `GetMoveRangeDistance` | — | R |
+| `GetBodySize` | — | Large-body gate |
+| `SinAbs4096` / `CosAbs4096` | — | 4096-unit trig |
+| `_s32_div_f` | — | Truncating divide; x / 0 = x |
