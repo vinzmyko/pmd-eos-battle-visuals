@@ -52,6 +52,8 @@ No effect is spawned (returns −1) when:
 - `GetBodySize(species) ≥ 4` and R == 1
 - the move's layer 3 effect id is 0
 
+**Body size:** `monster.md` `body_size` (u8, entry offset 0x13). Values are only 1, 2 or 4 (1080 / 35 / 40 entries). Size 4: Onix, Gyarados, Steelix, Lugia, Ho-Oh, Wailord, Milotic, Castform's forms, Kyogre, Groudon, Rayquaza. The offset comes from this data correlation and pmdsky-debug's `monster_data_table_entry`; `GetBodySize` itself is not decompiled.
+
 ```c
 idx = FUN_022bf01c(species, anim_id);               // move.attachment_point_idx, species % 600 override
 if (idx == -1) launch = *(s16x2 *)0x02352A54;       // (0, 0)
@@ -265,6 +267,8 @@ phase    += phase_step;
 
 `flags & 7` (`FUN_022bfd58`) → `FUN_02324e78` → returned by `FUN_02322ddc` → passed by `FUN_02322374` as `param_4`. `FUN_02322ddc` returns 0 when neither the attacker nor any target is displayed.
 
+The only moves with pattern 2 and a nonzero layer 3 effect are Skill Swap, Guard Swap, Power Swap, Heart Swap and Switcheroo. All five also set flag bit 3, so the bulge pairs with the return projectile on the opposite side.
+
 ### Launch Offset Decay (`FUN_022beb2c`)
 
 ```c
@@ -406,6 +410,7 @@ both thrown-item flight handlers identically. See `Items/thrown_item_visuals.md`
 - **Pattern 2:** a fixed-direction sideways bulge; angle mask is 0xFFF
 - **Draw order:** explicit bias table, not the unbound sentinel
 - **Launch pose:** the attack loop's break frame (first return frame), not idle and not the animation's last frame
+- **Body size field:** `monster.md` 0x13, values 1/2/4
 
 ## Open Questions
 
